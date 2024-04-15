@@ -182,6 +182,8 @@ class AMDA_Webservice(DataProvider):
             product version
         """
         dataset = self._find_parent_dataset(parameter_id)
+        if self.flat_inventory.datasets[dataset].lastModificationDate:
+            return self.flat_inventory.datasets[dataset].lastModificationDate
         return self.flat_inventory.datasets[dataset].lastUpdate
 
     def parameter_range(self, parameter_id: str or ParameterIndex) -> Optional[DateTimeRange]:
