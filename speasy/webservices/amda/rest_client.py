@@ -16,6 +16,7 @@ AMDA_BATCH_MODE_TIME = 240  # seconds
 class Endpoint(Enum):
     """AMDA_Webservice REST API endpoints.
     """
+    ISALIVE = "isAlive.php"
     AUTH = "auth.php"
     OBSTREE = "getObsDataTree.php"
 
@@ -74,6 +75,28 @@ def token(server_url: str = amda_cfg.entry_point()) -> str:
         return r.text.strip()
     else:
         raise RuntimeError("Failed to get auth token")
+
+
+def is_alive(server_url: str = amda_cfg.entry_point()) -> str:
+    """Test if AMDA service is reachable and not in maintenance mode
+
+    Parameters
+    ----------
+    server_url:str
+        server base service URL
+
+    Returns
+    -------
+    bool
+        True if AMDA service is alive
+    """
+    # url = "{0}/php/rest/isAlive.php?".format(self.server_url)
+    r = http.get(request_url(Endpoint.ISALIVE, server_url=server_url))
+    if r.status_code == 200:
+        j = r.json()
+        return j and 'alive' in j and j['alive']
+    else:
+        raise RuntimeError("Service not available")
 
 
 def send_request(endpoint: Endpoint, params: dict = None, timeout: int = http.DEFAULT_TIMEOUT,
@@ -399,6 +422,10 @@ def is_server_up(server_url: str = amda_cfg.entry_point()) -> bool:
         True if server is up, False otherwise
     """
     try:
+        # Test if AMDA service is alive
+        if not is_alive(server_url=server_url):
+            return False
+        # Test if at least one user ticket is available
         r = send_request(Endpoint.AUTH, server_url=server_url, timeout=1)
         return r is not None
     except:  # lgtm [py/catch-base-exception]
