@@ -182,7 +182,7 @@ class AMDA_Webservice(DataProvider):
             product version
         """
         dataset = self._find_parent_dataset(parameter_id)
-        if self.flat_inventory.datasets[dataset].lastModificationDate:
+        if 'lastModificationDate' in self.flat_inventory.datasets[dataset].__dict__:
             return self.flat_inventory.datasets[dataset].lastModificationDate
         return self.flat_inventory.datasets[dataset].lastUpdate
 
