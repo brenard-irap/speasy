@@ -5,6 +5,7 @@ import re
 from ..any_files import any_loc_open
 from ..url_utils import urlparse, is_local_file
 from ...products import SpeasyVariable, VariableAxis, VariableTimeAxis, DataContainer
+from .cdf_writer import save_variables
 
 
 def _fix_value_type(value):
