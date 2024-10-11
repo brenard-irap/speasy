@@ -11,9 +11,9 @@ from ..datetime_range import DateTimeRange
 from ..inventory.indexes import (CatalogIndex, ComponentIndex,
                                  DatasetIndex, ParameterIndex,
                                  SpeasyIndex, TimetableIndex)
-from ...config import core as core_cfg, amda as amda_cfg
+from ...config import core as core_cfg, amda as amda_cfg, clweb as clweb_cfg
 from ...products import *
-from ...webservices import (AMDA_Webservice, CDA_Webservice, CSA_Webservice,
+from ...webservices import (AMDA_Webservice, CLWeb_Webservice, CDA_Webservice, CSA_Webservice,
                             SSC_Webservice, GenericArchive)
 from ..http import is_server_up
 
@@ -30,6 +30,7 @@ csa = None
 cda = None
 ssc = None
 archive = None
+clweb = None
 
 
 def init_amda():
@@ -87,12 +88,24 @@ def init_archive():
         PROVIDERS['generic_archive'] = archive
 
 
+def init_clweb():
+    global clweb
+    if 'clweb' not in core_cfg.disabled_providers():
+        if CLWeb_Webservice.is_server_up():
+            clweb = CLWeb_Webservice()
+            sys.modules[__name__].clweb = clweb
+            PROVIDERS['clweb'] = clweb
+        else:
+            log.warning(f"CLWeb server {clweb_cfg.entry_point()} is down, disabling CLWeb provider")
+
+
 def init_providers():
     init_amda()
     init_csa()
     init_cdaweb()
     init_sscweb()
     init_archive()
+    init_clweb()
 
 
 if 'SPEASY_SKIP_INIT_PROVIDERS' not in os.environ:

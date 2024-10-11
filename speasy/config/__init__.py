@@ -224,6 +224,23 @@ amda = ConfigSection("AMDA",
                          "default": "CDF_ISTP"}
                      )
 
+clweb = ConfigSection("CLWEB",
+                     username={
+                         "description": """Your CLWEB username, once set, you will be able to get your private products."""},
+                     password={
+                         "description": """Your CLWEB password, once set, you will be able to get your private products."""},
+                     user_cache_retention={"default": 900,
+                                           "description": "CLWEB specific cache retention for requests such as list_timetables.",
+                                           "type_ctor": int
+                                           },
+                     max_chunk_size_days={
+                         "default": 10,
+                         "description": "Maximum request duration in days, any request over a longer period will be split into smaller ones.",
+                         "type_ctor": int},
+                     entry_point={
+                         "default": "https://clweb.irap.omp.eu"}
+                     )
+
 archive = ConfigSection("ARCHIVE",
                         extra_inventory_lookup_dirs={"default": set(),
                                                      "description": """A comma separated list of directory path Archive provider will scann for YAML inventory files.""",
