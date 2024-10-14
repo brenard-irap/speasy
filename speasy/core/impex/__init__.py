@@ -19,10 +19,17 @@ log = logging.getLogger(__name__)
 
 
 class ImpexProvider:
-    def __init__(self, provider: str, impex_client: ImpexClient, max_chunk_size_days: int = 10):
-        self.provider = provider
-        self.client = impex_client
+    def __init__(self, provider_name: str, server_url: str, max_chunk_size_days: int = 10, capabilities: List = None,
+                 username: str = "", password: str = ""):
+        self.provider_name = provider_name
+        self.server_url = server_url
+        self.client = ImpexClient(capabilities=capabilities, server_url=server_url,
+                                  username=username, password=password, output_format='CDF')
         self.max_chunk_size_days = max_chunk_size_days
+        self.cache_handlers = {}
+
+    def set_cache_handlers(self, cache_handlers):
+        self.cache_handlers = cache_handlers
 
     def is_server_up(self):
         if not self.client.reachable():
@@ -33,21 +40,29 @@ class ImpexProvider:
         return True
 
     def build_inventory(self, root: SpeasyIndex, name_mapping=None):
-        obs_data_tree = ImpexXMLParser.parse(self.client.get_obs_data_tree(), self.provider, name_mapping)
-        root.Parameters = SpeasyIndex(name='Parameters', provider=self.provider, uid='Parameters',
+        if 'get_obs_data_tree' in self.cache_handlers:
+            obs_data_tree_xml = self.cache_handlers['get_obs_data_tree']()
+        else:
+            obs_data_tree_xml = self.client.get_obs_data_tree()
+        obs_data_tree = ImpexXMLParser.parse(obs_data_tree_xml, self.provider_name, name_mapping)
+        root.Parameters = SpeasyIndex(name='Parameters', provider=self.provider_name, uid='Parameters',
                                       meta=obs_data_tree.dataRoot.dataCenter.__dict__)
 
         if self.client.is_capable(ImpexEndpoint.GETTT):
-            root.TimeTables = SpeasyIndex(name='TimeTables', provider=self.provider, uid='TimeTables')
-            public_tt = ImpexXMLParser.parse(self.client.get_time_table_list(), self.provider, name_mapping)
-            root.TimeTables.SharedTimeTables = SpeasyIndex(name='SharedTimeTables', provider=self.provider,
+            if 'get_time_table_list' in self.cache_handlers:
+                get_time_table_list_xml = self.cache_handlers['get_time_table_list']()
+            else:
+                get_time_table_list_xml = self.client.get_time_table_list()
+            root.TimeTables = SpeasyIndex(name='TimeTables', provider=self.provider_name, uid='TimeTables')
+            public_tt = ImpexXMLParser.parse(get_time_table_list_xml, self.provider_name, name_mapping)
+            root.TimeTables.SharedTimeTables = SpeasyIndex(name='SharedTimeTables', provider=self.provider_name,
                                                            uid='SharedTimeTables',
                                                            meta=public_tt.ws.timetabList.__dict__)
 
         if self.client.is_capable(ImpexEndpoint.GETCAT):
-            root.Catalogs = SpeasyIndex(name='Catalogs', provider=self.provider, uid='Catalogs')
-            public_cat = ImpexXMLParser.parse(self.client.get_catalog_list(), self.provider, name_mapping)
-            root.Catalogs.SharedCatalogs = SpeasyIndex(name='SharedCatalogs', provider=self.provider,
+            root.Catalogs = SpeasyIndex(name='Catalogs', provider=self.provider_name, uid='Catalogs')
+            public_cat = ImpexXMLParser.parse(self.client.get_catalog_list(), self.provider_name, name_mapping)
+            root.Catalogs.SharedCatalogs = SpeasyIndex(name='SharedCatalogs', provider=self.provider_name,
                                                        uid='SharedCatalogs',
                                                        meta=public_cat.catalogList.__dict__)
 
@@ -56,21 +71,25 @@ class ImpexProvider:
     def build_private_inventory(self, root: SpeasyIndex, name_mapping=None):
         if self.client.credential_are_valid():
             if self.client.is_capable(ImpexEndpoint.GETTT):
-                user_tt = ImpexXMLParser.parse(self.client.get_time_table_list(use_credentials=True), self.provider,
-                                               name_mapping, is_public=False)
-                root.TimeTables.MyTimeTables = SpeasyIndex(name='MyTimeTables', provider=self.provider,
+                if 'get_user_time_table_list' in self.cache_handlers:
+                    get_user_time_table_list_xml = self.cache_handlers['get_user_time_table_list']()
+                else:
+                    get_user_time_table_list_xml = self.client.get_time_table_list(use_credentials=True)
+                user_tt = ImpexXMLParser.parse(get_user_time_table_list_xml,
+                                               self.provider_name, name_mapping, is_public=False)
+                root.TimeTables.MyTimeTables = SpeasyIndex(name='MyTimeTables', provider=self.provider_name,
                                                            uid='MyTimeTables', meta=user_tt.ws.timetabList.__dict__)
 
             if self.client.is_capable(ImpexEndpoint.GETCAT):
-                user_cat = ImpexXMLParser.parse(self.client.get_catalog_list(use_credentials=True), self.provider,
+                user_cat = ImpexXMLParser.parse(self.client.get_catalog_list(use_credentials=True), self.provider_name,
                                                 name_mapping, is_public=False)
-                root.Catalogs.MyCatalogs = SpeasyIndex(name='MyCatalogs', provider=self.provider, uid='MyCatalogs',
+                root.Catalogs.MyCatalogs = SpeasyIndex(name='MyCatalogs', provider=self.provider_name, uid='MyCatalogs',
                                                        meta=user_cat.catalogList.__dict__)
 
             if self.client.is_capable(ImpexEndpoint.LISTPARAM):
                 user_param = ImpexXMLParser.parse(self.client.get_derived_parameter_list(use_credentials=True),
-                                                  self.provider, name_mapping, is_public=False)
-                root.DerivedParameters = SpeasyIndex(name='DerivedParameters', provider=self.provider,
+                                                  self.provider_name, name_mapping, is_public=False)
+                root.DerivedParameters = SpeasyIndex(name='DerivedParameters', provider=self.provider_name,
                                                      uid='DerivedParameters', meta=user_param.ws.paramList.__dict__)
         return root
 
@@ -112,7 +131,7 @@ class ImpexProvider:
             if not self.client.credential_are_valid():
                 raise MissingCredentials(
                     "Restricted period requested but no credentials provided, please add your "
-                    "{} credentials.".format(self.provider))
+                    "{} credentials.".format(self.provider_name))
         if stop_time - start_time > dt:
             var = None
             curr_t = start_time
@@ -133,9 +152,13 @@ class ImpexProvider:
                                  use_credentials=True, **kwargs)
 
     def dl_timetable(self, timetable_id: str, use_credentials=False, **kwargs):
-        url = self.client.get_timetable(timetable_id, use_credentials=use_credentials, **kwargs)
-        if url is not None:
-            timetable = load_timetable(filename=url)
+        if 'get_timetable' in self.cache_handlers:
+            get_timetable_url = self.cache_handlers['get_timetable'](timetable_id,
+                                                                     use_credentials=use_credentials, **kwargs)
+        else:
+            get_timetable_url = self.client.get_timetable(timetable_id, use_credentials=use_credentials, **kwargs)
+        if get_timetable_url is not None:
+            timetable = load_timetable(filename=get_timetable_url)
             if timetable:
                 timetable.meta.update(flat_inventories.amda.timetables.get(timetable_id, SimpleNamespace()).__dict__)
                 log.debug(f'Loaded timetable: id = {timetable_id}')  # lgtm[py/clear-text-logging-sensitive-data]

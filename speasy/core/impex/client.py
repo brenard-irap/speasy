@@ -61,8 +61,11 @@ class ImpexClient:
     def is_alive(self):
         pass
 
-    def get_obs_data_tree(self):
-        return self._send_indirect_request(ImpexEndpoint.OBSTREE)
+    def get_obs_data_tree(self, use_credentials=False):
+        params = {}
+        if use_credentials:
+            params = {'userID': self.username, 'password': self.password}
+        return self._send_indirect_request(ImpexEndpoint.OBSTREE, params=params)
 
     def get_time_table_list(self, use_credentials=False):
         params = {}
