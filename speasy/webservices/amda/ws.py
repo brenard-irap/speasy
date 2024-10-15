@@ -45,9 +45,9 @@ class AMDAProvider(ImpexProvider):
 
 
 amda_provider = AMDAProvider(provider_name=amda_provider_name, server_url=amda_cfg.entry_point()+"/php/rest",
-                              max_chunk_size_days=amda_cfg.max_chunk_size_days(),
-                              capabilities=amda_capabilities,
-                              username=amda_cfg.username(), password=amda_cfg.password())
+                             max_chunk_size_days=amda_cfg.max_chunk_size_days(),
+                             capabilities=amda_capabilities,
+                             username=amda_cfg.username(), password=amda_cfg.password())
 
 
 @CacheCall(cache_retention=24 * 60 * 60, is_pure=True)

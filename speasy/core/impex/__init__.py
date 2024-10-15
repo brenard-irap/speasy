@@ -19,7 +19,8 @@ log = logging.getLogger(__name__)
 
 
 class ImpexProvider:
-    def __init__(self, provider_name: str, server_url: str, max_chunk_size_days: int = 10, capabilities: List = None,
+    def __init__(self, provider_name: str, server_url: str,
+                 max_chunk_size_days: int = 10, capabilities: List = None,
                  username: str = "", password: str = ""):
         self.provider_name = provider_name
         self.server_url = server_url
@@ -175,7 +176,8 @@ class ImpexProvider:
         if get_timetable_url is not None:
             timetable = load_timetable(filename=get_timetable_url)
             if timetable:
-                timetable.meta.update(flat_inventories.amda.timetables.get(timetable_id, SimpleNamespace()).__dict__)
+                timetable.meta.update(
+                    flat_inventories.__dict__[self.provider_name].timetables.get(timetable_id, SimpleNamespace()).__dict__)
                 log.debug(f'Loaded timetable: id = {timetable_id}')  # lgtm[py/clear-text-logging-sensitive-data]
             else:
                 log.debug('Got None')
@@ -195,7 +197,8 @@ class ImpexProvider:
             catalog = load_catalog(get_catalog_url)
             if catalog:
                 log.debug(f'Loaded catalog: id = {catalog_id}')  # lgtm[py/clear-text-logging-sensitive-data]
-                catalog.meta.update(flat_inventories.amda.catalogs.get(catalog_id, SimpleNamespace()).__dict__)
+                catalog.meta.update(
+                    flat_inventories.__dict__[self.provider_name].catalogs.get(catalog_id, SimpleNamespace()).__dict__)
             else:
                 log.debug('Got None')
             return catalog

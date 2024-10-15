@@ -159,7 +159,9 @@ class CLWeb_Webservice(DataProvider):
         return clweb_provider.dl_timetable(to_xmlid(timetable_id), **kwargs)
 
     def list_parameters(self, dataset_id: Optional[str or DatasetIndex] = None) -> List[ParameterIndex]:
-        return list(self.flat_inventory.datasets[to_xmlid(dataset_id)])
+        if dataset_id is not None:
+            return list(self.flat_inventory.datasets[to_xmlid(dataset_id)])
+        return list(self.flat_inventory.parameters.values())
 
     def list_timetables(self) -> List[TimetableIndex]:
         return list(self.flat_inventory.timetables.values())
