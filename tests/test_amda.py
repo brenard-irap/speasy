@@ -13,8 +13,8 @@ from speasy.config import amda as amda_cfg
 from speasy.inventories import flat_inventories
 from speasy.products import SpeasyVariable
 from speasy.webservices.amda import ProductType
-from speasy.webservices.amda.exceptions import MissingCredentials
-from speasy.webservices.amda.inventory import AmdaXMLParser, to_xmlid
+from speasy.core.impex.exceptions import MissingCredentials
+from speasy.core.impex.parser import ImpexXMLParser, to_xmlid
 from speasy.webservices.amda.utils import load_csv
 
 _HERE_ = os.path.dirname(os.path.abspath(__file__))
@@ -213,7 +213,7 @@ class AMDAModule(unittest.TestCase):
         with open(os.path.normpath(f'{_HERE_}/resources/obsdatatree.xml')) as obs_xml:
             flat_inventories.amda.parameters.clear()
             flat_inventories.amda.datasets.clear()
-            root = AmdaXMLParser.parse(obs_xml.read(), is_public=True)
+            root = ImpexXMLParser.parse(obs_xml.read(), is_public=True, provider_name='amda')
             flat_inventories.amda.update(root)
             self.assertIsNotNone(root)
             # grep -o -i '<parameter ' obsdatatree.xml | wc -l

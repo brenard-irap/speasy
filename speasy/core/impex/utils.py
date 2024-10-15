@@ -90,3 +90,11 @@ def load_catalog(filename: str) -> Catalog:
         events = [_build_event(line, col_names) for line in data]
         var = Catalog(name=name, meta={}, events=events)
         return var
+
+
+def is_public(node):
+    return node.__dict__.get('is_public', True)
+
+
+def is_private(node):
+    return not is_public(node)

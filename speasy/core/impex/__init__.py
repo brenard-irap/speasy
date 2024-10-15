@@ -55,13 +55,21 @@ class ImpexProvider:
                 get_time_table_list_xml = self.client.get_time_table_list()
             root.TimeTables = SpeasyIndex(name='TimeTables', provider=self.provider_name, uid='TimeTables')
             public_tt = ImpexXMLParser.parse(get_time_table_list_xml, self.provider_name, name_mapping)
+            if hasattr(public_tt, 'ws'):
+                shared_root = public_tt.ws.timetabList # CLWeb case
+            else:
+                shared_root = public_tt.timeTableList # AMDA case
             root.TimeTables.SharedTimeTables = SpeasyIndex(name='SharedTimeTables', provider=self.provider_name,
                                                            uid='SharedTimeTables',
-                                                           meta=public_tt.ws.timetabList.__dict__)
+                                                           meta=shared_root.__dict__)
 
         if self.client.is_capable(ImpexEndpoint.GETCAT):
+            if 'get_catalog_list' in self.cache_handlers:
+                get_catalog_list_xml = self.cache_handlers['get_catalog_list']()
+            else:
+                get_catalog_list_xml = self.client.get_catalog_list()
             root.Catalogs = SpeasyIndex(name='Catalogs', provider=self.provider_name, uid='Catalogs')
-            public_cat = ImpexXMLParser.parse(self.client.get_catalog_list(), self.provider_name, name_mapping)
+            public_cat = ImpexXMLParser.parse(get_catalog_list_xml, self.provider_name, name_mapping)
             root.Catalogs.SharedCatalogs = SpeasyIndex(name='SharedCatalogs', provider=self.provider_name,
                                                        uid='SharedCatalogs',
                                                        meta=public_cat.catalogList.__dict__)
@@ -77,11 +85,19 @@ class ImpexProvider:
                     get_user_time_table_list_xml = self.client.get_time_table_list(use_credentials=True)
                 user_tt = ImpexXMLParser.parse(get_user_time_table_list_xml,
                                                self.provider_name, name_mapping, is_public=False)
+                if hasattr(user_tt, 'ws'):
+                    public_root = user_tt.ws.timetabList  # CLWeb case
+                else:
+                    public_root = user_tt.timetabList  # AMDA case
                 root.TimeTables.MyTimeTables = SpeasyIndex(name='MyTimeTables', provider=self.provider_name,
-                                                           uid='MyTimeTables', meta=user_tt.ws.timetabList.__dict__)
+                                                           uid='MyTimeTables', meta=public_root.__dict__)
 
             if self.client.is_capable(ImpexEndpoint.GETCAT):
-                user_cat = ImpexXMLParser.parse(self.client.get_catalog_list(use_credentials=True), self.provider_name,
+                if 'get_user_catalog_list' in self.cache_handlers:
+                    get_user_catalog_list_xml = self.cache_handlers['get_user_catalog_list']()
+                else:
+                    get_user_catalog_list_xml = self.client.get_catalog_list(use_credentials=True)
+                user_cat = ImpexXMLParser.parse(get_user_catalog_list_xml, self.provider_name,
                                                 name_mapping, is_public=False)
                 root.Catalogs.MyCatalogs = SpeasyIndex(name='MyCatalogs', provider=self.provider_name, uid='MyCatalogs',
                                                        meta=user_cat.catalogList.__dict__)
@@ -93,9 +109,6 @@ class ImpexProvider:
                                                      uid='DerivedParameters', meta=user_param.ws.paramList.__dict__)
         return root
 
-    def load_specific_output_format(self, filename: str, expected_parameter: str):
-        return None
-
     def dl_parameter_chunk(self, start_time: datetime, stop_time: datetime, parameter_id: str,
                            extra_http_headers: Dict or None = None,
                            use_credentials: bool = False,
@@ -106,9 +119,9 @@ class ImpexProvider:
                                         use_credentials=use_credentials, **kwargs)
         # check status until done
         if url is not None:
-            if self.client.output_format in ["CDF_ISTP", "CDF"]:
+            if kwargs.get('output_format', self.client.output_format) in ["CDF_ISTP", "CDF"]:
                 var = cdf_load_variable(variable=product_variables[0], file=url)
-            else:
+            elif hasattr(self, 'load_specific_output_format'):
                 var = self.load_specific_output_format(url, parameter_id)
             if var is not None:
                 if len(var):
@@ -124,7 +137,7 @@ class ImpexProvider:
 
     def dl_parameter(self, start_time: datetime, stop_time: datetime, parameter_id: str,
                      extra_http_headers: Dict or None = None, restricted_period=False,
-                     use_credentials: bool = True,
+                     use_credentials: bool = False,
                      product_variables: List = None, **kwargs) -> Optional[SpeasyVariable]:
         dt = timedelta(days=self.max_chunk_size_days)
         if restricted_period:
@@ -132,6 +145,8 @@ class ImpexProvider:
                 raise MissingCredentials(
                     "Restricted period requested but no credentials provided, please add your "
                     "{} credentials.".format(self.provider_name))
+            else:
+                use_credentials = True
         if stop_time - start_time > dt:
             var = None
             curr_t = start_time
@@ -171,9 +186,13 @@ class ImpexProvider:
         return self.dl_timetable(timetable_id, use_credentials=True, **kwargs)
 
     def dl_catalog(self, catalog_id: str, use_credentials=False, **kwargs):
-        url = self.client.get_catalog(catID=catalog_id, use_credentials=use_credentials, **kwargs)
-        if url is not None:
-            catalog = load_catalog(url)
+        if 'get_catalog' in self.cache_handlers:
+            get_catalog_url = self.cache_handlers['get_catalog'](catalog_id,
+                                                                 use_credentials=use_credentials, **kwargs)
+        else:
+            get_catalog_url = self.client.get_catalog(catalog_id, use_credentials=use_credentials, **kwargs)
+        if get_catalog_url is not None:
+            catalog = load_catalog(get_catalog_url)
             if catalog:
                 log.debug(f'Loaded catalog: id = {catalog_id}')  # lgtm[py/clear-text-logging-sensitive-data]
                 catalog.meta.update(flat_inventories.amda.catalogs.get(catalog_id, SimpleNamespace()).__dict__)

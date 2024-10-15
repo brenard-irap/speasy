@@ -37,10 +37,10 @@ clweb_name_mapping = {
     "dataset": "name"
 }
 
-clweb_provider = impex_provider = ImpexProvider(provider_name=clweb_provider_name, server_url=clweb_cfg.entry_point(),
-                                                max_chunk_size_days=clweb_cfg.max_chunk_size_days(),
-                                                capabilities=clweb_capabilities,
-                                                username=clweb_cfg.username(), password=clweb_cfg.password())
+clweb_provider = ImpexProvider(provider_name=clweb_provider_name, server_url=clweb_cfg.entry_point(),
+                               max_chunk_size_days=clweb_cfg.max_chunk_size_days(),
+                               capabilities=clweb_capabilities,
+                               username=clweb_cfg.username(), password=clweb_cfg.password())
 
 @CacheCall(cache_retention=24 * 60 * 60, is_pure=True)
 def get_obs_data_tree() -> str or None:

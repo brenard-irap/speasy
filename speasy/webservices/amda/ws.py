@@ -6,12 +6,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Union
 
-from ._impl import is_private, is_public
-from .inventory import to_xmlid
-from .utils import get_parameter_args
 from ...config import amda as amda_cfg
 from ...core import AllowedKwargs, make_utc_datetime, EnsureUTCDateTime
-from ...core.http import is_server_up
 from ...core.cache import CACHE_ALLOWED_KWARGS, Cacheable, CacheCall
 from ...core.dataprovider import (GET_DATA_ALLOWED_KWARGS, DataProvider,
                                   ParameterRangeCheck)
@@ -25,7 +21,79 @@ from ...products.dataset import Dataset
 from ...products.timetable import TimeTable
 from ...products.variable import SpeasyVariable
 
+from ...core.impex import ImpexProvider, ImpexEndpoint
+from ...core.impex.parser import to_xmlid
+from ...core.impex.utils import is_public, is_private
+from .utils import load_csv
+
 log = logging.getLogger(__name__)
+
+amda_provider_name = 'amda'
+amda_capabilities = [ ImpexEndpoint.AUTH, ImpexEndpoint.OBSTREE, ImpexEndpoint.GETPARAM, ImpexEndpoint.LISTTT,
+                      ImpexEndpoint.GETTT, ImpexEndpoint.LISTCAT, ImpexEndpoint.GETCAT ]
+amda_name_mapping = {
+    "dataset": "xmlid",
+    "parameter": "xmlid",
+    "folder": "name",
+    "component": "xmlid"
+}
+
+
+class AMDAProvider(ImpexProvider):
+    def load_specific_output_format(self, filename: str, expected_parameter: str):
+        return load_csv(filename, expected_parameter)
+
+
+amda_provider = AMDAProvider(provider_name=amda_provider_name, server_url=amda_cfg.entry_point()+"/php/rest",
+                              max_chunk_size_days=amda_cfg.max_chunk_size_days(),
+                              capabilities=amda_capabilities,
+                              username=amda_cfg.username(), password=amda_cfg.password())
+
+
+@CacheCall(cache_retention=24 * 60 * 60, is_pure=True)
+def get_obs_data_tree() -> str or None:
+    return amda_provider.client.get_obs_data_tree()
+
+
+@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+def get_timetables_xml_tree() -> str or None:
+    return amda_provider.client.get_time_table_list()
+
+
+@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+def get_user_timetables_xml_tree() -> str or None:
+    return amda_provider.client.get_time_table_list(use_credentials=True)
+
+
+@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+def get_timetable(tt_id: str, use_credentials: bool, **kwargs) -> str or None:
+    return amda_provider.client.get_timetable(tt_id, use_credentials=use_credentials, **kwargs)
+
+
+@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+def get_catalogs_xml_tree() -> str or None:
+    return amda_provider.client.get_catalog_list()
+
+
+@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+def get_user_catalogs_xml_tree() -> str or None:
+    return amda_provider.client.get_catalog_list(use_credentials=True)
+
+
+@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+def get_catalog(catalog_id: str, use_credentials: bool, **kwargs) -> str or None:
+    return amda_provider.client.get_catalog(catalog_id, use_credentials=use_credentials, **kwargs)
+
+
+amda_provider.set_cache_handlers({
+    'get_obs_data_tree': get_obs_data_tree,
+    'get_time_table_list': get_timetables_xml_tree,
+    'get_user_time_table_list': get_user_timetables_xml_tree,
+    'get_timetable': get_timetable,
+    'get_catalog_list': get_catalogs_xml_tree,
+    'get_user_catalog_list': get_user_catalogs_xml_tree,
+    'get_catalog': get_catalog
+})
 
 
 def _amda_cache_entry_name(prefix: str, product: str, start_time: str, **kwargs):
@@ -34,6 +102,12 @@ def _amda_cache_entry_name(prefix: str, product: str, start_time: str, **kwargs)
         return f"{prefix}/{product}-cdf_istp/{start_time}"
     else:
         return f"{prefix}/{product}/{start_time}"
+
+
+def _amda_get_proxy_parameter_args(start_time: datetime, stop_time: datetime, product: str, **kwargs) -> Dict:
+    return {'path': f"{amda_provider_name}/{product}", 'start_time': f'{start_time.isoformat()}',
+            'stop_time': f'{stop_time.isoformat()}',
+            'output_format': kwargs.get('output_format', amda_cfg.output_format.get())}
 
 
 class ProductType(Enum):
@@ -56,79 +130,22 @@ def _is_user_prod(product_id: str or SpeasyIndex, collection: Dict):
 
 class AMDA_Webservice(DataProvider):
     __datetime_format__ = "%Y-%m-%dT%H:%M:%S.%f"
-    """AMDA_Webservice connexion class. This class manages the connexion to AMDA_Webservice. Use the :meth:`get_data` or
-    :meth:`get_parameter` methods for retrieving data.
 
-    Methods
-    -------
-    is_server_up:
-        Check if AMDA Webservice is up.
-    product_version:
-        Get date of last modification of dataset or parameter.
-    get_data:
-        Get product data by id
-    get_user_parameter:
-        Get user parameter. Raises an exception if user is not authenticated.
-    get_user_timetable:
-    get_user_catalog:
-    get_parameter:
-        Get parameter data by id.
-    get_dataset:
-        Get dataset contents. Returns list of SpeasyVariable objects, one for each parameter in the dataset.
-    get_timetable:
-        Get timetable data by ID.
-    get_catalog:
-        Retrieve catalog from given ID.
-    parameter_range:
-        Get product time range.
-    list_parameters:
-        Get the list of parameter indexes available in AMDA_Webservice.
-    list_catalogs:
-        Get the list of public catalog IDs.
-    list_user_timetables:
-    list_user_catalogs:
-    list_user_parameters:
-    list_timetables:
-    list_datasets:
-
-    Notes
-    -----
-    Do not create an instance of this class unless you really know what you are doing, use `speasy.amda` instance instead.
-
-
-    """
-
-    def __init__(self, server_url: str = amda_cfg.entry_point()):
-        from ._impl import AmdaImpl
-        self._impl = AmdaImpl(server_url=server_url)
-        DataProvider.__init__(self, provider_name='amda')
+    def __init__(self):
+        DataProvider.__init__(self, provider_name=amda_provider_name)
 
     def __del__(self):
         pass
 
     @staticmethod
     def is_server_up(server_url: str = amda_cfg.entry_point()) -> bool:
-        """Check if AMDA Webservice is up by sending a dummy request to the AMDA Webservice URL with a short timeout.
-
-        Parameters
-        ----------
-        server_url: str
-            AMDA Webservice URL, default is https://amda.irap.omp.eu
-
-        Returns
-        -------
-        bool
-            True if AMDA Webservice is up, False otherwise.
-
-        """
-        from ._impl import AmdaImpl
-        return AmdaImpl.is_server_up(server_url=server_url)
+        return amda_provider.is_server_up()
 
     def build_inventory(self, root: SpeasyIndex):
-        return self._impl.build_inventory(root)
+        return amda_provider.build_inventory(root, amda_name_mapping)
 
     def build_private_inventory(self, root: SpeasyIndex):
-        return self._impl.build_private_inventory(root)
+        return amda_provider.build_private_inventory(root, amda_name_mapping)
 
     def is_user_catalog(self, catalog_id: str or CatalogIndex):
         return _is_user_prod(catalog_id, self.flat_inventory.catalogs)
@@ -141,22 +158,6 @@ class AMDA_Webservice(DataProvider):
 
     def has_time_restriction(self, product_id: str or SpeasyIndex, start_time: str or datetime,
                              stop_time: str or datetime):
-        """Check if product is restricted for a given time range.
-
-        Parameters
-        ----------
-        product_id: str or SpeasyIndex
-            product id
-        start_time: str or datetime
-            desired data start time
-        stop_time: str or datetime
-            desired data stop time
-
-        Returns
-        -------
-        bool
-            True if product is restricted for the given time range, False otherwise.
-        """
         dataset = self._find_parent_dataset(product_id)
         if dataset:
             dataset = self.flat_inventory.datasets[dataset]
@@ -169,101 +170,24 @@ class AMDA_Webservice(DataProvider):
         return False
 
     def product_version(self, parameter_id: str or ParameterIndex):
-        """Get date of last modification of dataset or parameter.
-
-        Parameters
-        ----------
-        parameter_id: str or AMDAParameterIndex
-            parameter id
-
-        Returns
-        -------
-        str
-            product version
-        """
         dataset = self._find_parent_dataset(parameter_id)
         return self.flat_inventory.datasets[dataset].lastUpdate
 
     def parameter_range(self, parameter_id: str or ParameterIndex) -> Optional[DateTimeRange]:
-        """Get product time range.
-
-        Parameters
-        ----------
-        parameter_id: str or ParameterIndex
-            parameter id
-
-        Returns
-        -------
-        Optional[DateTimeRange]
-            Data time range
-
-        Examples
-        --------
-        >>> import speasy as spz
-        >>> spz.amda.parameter_range("imf")
-        <DateTimeRange: 1997-09-02T00:00:12+00:00 -> ...>
-        """
         return self._parameter_range(parameter_id)
 
     def dataset_range(self, dataset_id: str or DatasetIndex) -> Optional[DateTimeRange]:
-        """Get product time range.
-
-        Parameters
-        ----------
-        dataset_id: str or DatasetIndex
-            parameter id
-
-        Returns
-        -------
-        Optional[DateTimeRange]
-            Data time range
-
-        Examples
-        --------
-        >>> import speasy as spz
-        >>> spz.amda.dataset_range("ace-imf-all")
-        <DateTimeRange: 1997-09-02T00:00:12+00:00 -> ...>
-        """
-
         return self._dataset_range(dataset_id)
 
     def get_data(self, product, start_time=None, stop_time=None,
                  **kwargs) -> Optional[Union[SpeasyVariable, TimeTable, Catalog, Dataset]]:
-        """Get product data by id.
-
-        Parameters
-        ----------
-        product: str or AMDAIndex
-            product id
-        start_time: str or datetime.datetime
-            desired data start time
-        stop_time: str datetime.datetime
-            desired data stop time
-
-        Returns
-        -------
-        Optional[Union[SpeasyVariable, TimeTable, Catalog, Dataset]]
-            product data if available
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> imf_data = spz.amda.get_data("imf", "2019-02-24T19:20:05", "2019-02-25")
-        >>> print(imf_data.columns)
-        ['imf[0]', 'imf[1]', 'imf[2]']
-        >>> print(imf_data.values.shape)
-        (1050, 3)
-
-
-        """
         product_t = self.product_type(product)
         if product_t == ProductType.DATASET and start_time and stop_time:
             return self.get_dataset(dataset_id=product, start=start_time, stop=stop_time, **kwargs)
         if product_t == ProductType.PARAMETER and start_time and stop_time:
             if self.is_user_parameter(product):
-                return self.get_user_parameter(parameter_id=product, start_time=start_time, stop_time=stop_time,
-                                               **kwargs)
+                return self.get_user_parameter(parameter_id=product,
+                                               start_time=start_time, stop_time=stop_time, **kwargs)
             else:
                 return self.get_parameter(product=product, start_time=start_time, stop_time=stop_time, **kwargs)
         if product_t == ProductType.CATALOG:
@@ -279,106 +203,20 @@ class AMDA_Webservice(DataProvider):
         raise ValueError(f"Unknown product: {product}")
 
     def get_user_parameter(self, parameter_id: str or ParameterIndex, start_time: datetime or str,
-                           stop_time: datetime or str) -> Optional[SpeasyVariable]:
-        """Get user parameter. Raises an exception if user is not authenticated.
-
-        Parameters
-        ----------
-        parameter_id: str or AMDAParameterIndex
-            parameter id
-        start_time: datetime or str
-            begining of data time
-        stop_time: datetime or str
-            end of data time
-
-        Returns
-        -------
-        Optional[SpeasyVariable]
-            user parameter
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> user_param = spz.amda.get_user_parameter("ws_0", "2019-02-24T19:20:05", "2019-02-25") # doctest: +SKIP
-        >>> print(user_param.columns) # doctest: +SKIP
-        ['ws_test_param']
-        >>> print(user_param.values.shape) # doctest: +SKIP
-        (2, 1)
-
-
-        Warnings
-        --------
-            Calling :meth:`~speasy.amda.amda.AMDA_Webservice.get_user_parameter` without having defined AMDA_Webservice
-            login credentials will result in a :class:`~speasy.config.exceptions.UndefinedConfigEntry`
-            exception being raised.
-
-        """
+                           stop_time: datetime or str, **kwargs) -> Optional[SpeasyVariable]:
         parameter_id = to_xmlid(parameter_id)
         start_time, stop_time = make_utc_datetime(start_time), make_utc_datetime(stop_time)
-        return self._impl.dl_user_parameter(parameter_id=parameter_id, start_time=start_time, stop_time=stop_time)
+        return amda_provider.dl_user_parameter(parameter_id=parameter_id, start_time=start_time, stop_time=stop_time)
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention())
     def get_user_timetable(self, timetable_id: str or TimetableIndex) -> Optional[TimeTable]:
-        """Get user timetable. Raises an exception if user is not authenticated.
-
-        Parameters
-        ----------
-        timetable_id: str
-            timetable id
-
-        Returns
-        -------
-        Optional[TimeTable]
-            user timetable
-
-        Examples
-        --------
-        >>> import speasy as spz
-        >>> spz.amda.get_user_timetable("tt_0") # doctest: +SKIP
-        <TimeTable: test_alexis>
-
-        Warnings
-        --------
-            Calling :meth:`~speasy.amda.amda.AMDA_Webservice.get_user_timetable` without having defined AMDA_Webservice
-            login credentials will result in a :class:`~speasy.config.exceptions.UndefinedConfigEntry`
-            exception being raised.
-
-        """
         timetable_id = to_xmlid(timetable_id)
-        return self._impl.dl_user_timetable(timetable_id=timetable_id)
+        return amda_provider.dl_user_timetable(to_xmlid(timetable_id))
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention())
     def get_user_catalog(self, catalog_id: str or CatalogIndex) -> Optional[Catalog]:
-        """Get user catalog. Raises an exception if user is not authenticated.
-
-
-        Parameters
-        ----------
-        catalog_id: str or AMDACatalogIndex
-            catalog id
-
-        Returns
-        -------
-        Optional[Catalog]
-            user catalog
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> spz.amda.get_user_catalog("tt_0") # doctest: +SKIP
-        <Catalog: test_alexis>
-
-        Warnings
-        --------
-            Calling :meth:`~speasy.amda.amda.AMDA_Webservice.get_user_catalog` without having defined AMDA_Webservice
-            login credentials will result in a :class:`~speasy.config.exceptions.UndefinedConfigEntry`
-            exception being raised.
-
-        """
         catalog_id = to_xmlid(catalog_id)
-        return self._impl.dl_user_catalog(catalog_id=catalog_id)
+        return amda_provider.dl_user_catalog(to_xmlid(catalog_id))
 
     def get_parameter(self, product, start_time, stop_time,
                       extra_http_headers: Dict or None = None, output_format: str or None = None, **kwargs) -> Optional[
@@ -392,54 +230,29 @@ class AMDA_Webservice(DataProvider):
             return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
                                        output_format=output_format or amda_cfg.output_format(), **kwargs)
 
+    def get_product_variables(self, product_id: str or SpeasyIndex):
+        print(product_id)
+        product_id = to_xmlid(product_id)
+        return [product_id]
+
     @AllowedKwargs(
         PROXY_ALLOWED_KWARGS + CACHE_ALLOWED_KWARGS + GET_DATA_ALLOWED_KWARGS + ['output_format', 'restricted_period'])
     @EnsureUTCDateTime()
     @ParameterRangeCheck()
     @Cacheable(prefix="amda", version=product_version, fragment_hours=lambda x: 12, entry_name=_amda_cache_entry_name)
-    @Proxyfiable(GetProduct, get_parameter_args)
+    @Proxyfiable(GetProduct, _amda_get_proxy_parameter_args)
     def _get_parameter(self, product, start_time, stop_time,
                        extra_http_headers: Dict or None = None, output_format: str or None = None,
                        restricted_period=False, **kwargs) -> \
         Optional[
             SpeasyVariable]:
-        """Get parameter data.
-
-        Parameters
-        ----------
-        product: str or AMDAParameterIndex
-            parameter id
-        start_time:
-            desired data start time
-        stop_time:
-            desired data stop time
-        extra_http_headers: dict
-            reserved for internal use
-        output_format: str
-            request output format in case of success, allowed values are ASCII and CDF_ISTP
-
-        Returns
-        -------
-        Optional[SpeasyVariable]
-            product data if available
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> import datetime
-        >>> imf_data = spz.amda.get_parameter("imf", "2018-01-01", "2018-01-01T01")
-        >>> print(imf_data.columns)
-        ['imf[0]', 'imf[1]', 'imf[2]']
-        >>> print(imf_data.values.shape)
-        (225, 3)
-
-        """
         log.debug(f'Get data: product = {product}, data start time = {start_time}, data stop time = {stop_time}')
-        return self._impl.dl_parameter(start_time=start_time, stop_time=stop_time, parameter_id=product,
-                                       extra_http_headers=extra_http_headers,
-                                       output_format=output_format,
-                                       restricted_period=restricted_period)
+        return amda_provider.dl_parameter(start_time=start_time, stop_time=stop_time, parameter_id=product,
+                                          extra_http_headers=extra_http_headers,
+                                          output_format=output_format,
+                                          product_variables=self.get_product_variables(product),
+                                          restricted_period=restricted_period,
+                                          time_format='UNIXTIME')
 
     def get_dataset(self, dataset_id: str or DatasetIndex, start: str or datetime, stop: str or datetime,
                     **kwargs) -> Dataset or None:
@@ -487,53 +300,11 @@ class AMDA_Webservice(DataProvider):
                        variables={p.name: self.get_parameter(p, start, stop, **kwargs) for p in parameters},
                        meta=meta)
 
-    @CacheCall(cache_retention=amda_cfg.user_cache_retention())
     def get_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
-        """Get timetable data by ID.
+        return amda_provider.dl_timetable(to_xmlid(timetable_id), **kwargs)
 
-        Parameters
-        ----------
-        timetable_id: str or TimetableIndex
-            time table id
-
-        Returns
-        -------
-        Optional[TimeTable]
-            timetable data
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> spz.amda.get_timetable("sharedtimeTable_0")
-        <TimeTable: FTE_c1>
-
-        """
-        return self._impl.dl_timetable(to_xmlid(timetable_id), **kwargs)
-
-    @CacheCall(cache_retention=amda_cfg.user_cache_retention())
     def get_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
-        """Get catalog data by ID.
-
-        Parameters
-        ----------
-        catalog_id: str or AMDACatalogIndex
-            catalog id
-
-        Returns
-        -------
-        Optional[Catalog]
-            catalog data
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> spz.amda.get_catalog("sharedcatalog_22")
-        <Catalog: model_regions_plasmas_mms_2019>
-
-        """
-        return self._impl.dl_catalog(to_xmlid(catalog_id), **kwargs)
+        return amda_provider.dl_catalog(to_xmlid(catalog_id), **kwargs)
 
     def list_parameters(self, dataset_id: Optional[str or DatasetIndex] = None) -> List[ParameterIndex]:
 

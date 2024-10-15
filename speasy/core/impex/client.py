@@ -6,7 +6,6 @@ import time
 
 from ...core.http import is_server_up
 from ...core import http
-from ...core.cache import CacheCall
 
 from .exceptions import MissingCredentials
 
@@ -39,6 +38,7 @@ class ImpexClient:
         self.password = password
         self.output_format = output_format
         self.time_format = time_format
+        self.use_token = self.is_capable(ImpexEndpoint.AUTH)
 
     def is_capable(self, api: ImpexEndpoint):
         return api in self.capabilities
@@ -61,20 +61,26 @@ class ImpexClient:
     def is_alive(self):
         pass
 
+    def auth(self):
+        return self._send_request(ImpexEndpoint.AUTH)
+
     def get_obs_data_tree(self, use_credentials=False):
         params = {}
         if use_credentials:
-            params = {'userID': self.username, 'password': self.password}
+            params['userID'], params['password'] = self.get_credentials()
         return self._send_indirect_request(ImpexEndpoint.OBSTREE, params=params)
 
     def get_time_table_list(self, use_credentials=False):
         params = {}
         if use_credentials:
-            params = {'userID': self.username, 'password': self.password}
+            params['userID'], params['password'] = self.get_credentials()
         return self._send_indirect_request(ImpexEndpoint.LISTTT, params=params)
 
     def get_catalog_list(self, use_credentials=False):
-        pass
+        params = {}
+        if use_credentials:
+            params['userID'], params['password'] = self.get_credentials()
+        return self._send_indirect_request(ImpexEndpoint.LISTCAT, params=params)
 
     def get_derived_parameter_list(self, use_credentials=False):
         pass
@@ -87,11 +93,17 @@ class ImpexClient:
         params = {
             'startTime': start_time,
             'stopTime': stop_time,
-            'parameterID': parameter_id
+            'parameterID': parameter_id,
+            'outputFormat': kwargs.get('output_format', self.output_format)
         }
+
+        if kwargs.get('time_format'):
+            params['timeFormat'] = kwargs.get('time_format')
+
         if use_credentials:
-            params['userID'] = self.username
-            params['password'] = self.password
+            params['userID'], params['password'] = self.get_credentials()
+        if self.use_token:
+            params['token'] = self.auth()
         return self._send_request(ImpexEndpoint.GETPARAM, params=params,
                                   extra_http_headers=extra_http_headers)
 
@@ -100,12 +112,16 @@ class ImpexClient:
             'ttID': tt_id
         }
         if use_credentials:
-            params['userID'] = self.username
-            params['password'] = self.password
+            params['userID'], params['password'] = self.get_credentials()
         return self._send_request(ImpexEndpoint.GETTT, params=params)
 
     def get_catalog(self, catalog_id, use_credentials=False, **kwargs):
-        pass
+        params = {
+            'catID': catalog_id
+        }
+        if use_credentials:
+            params['userID'], params['password'] = self.get_credentials()
+        return self._send_request(ImpexEndpoint.GETCAT, params=params)
 
     def _request_url(self, endpoint: ImpexEndpoint) -> str:
         if isinstance(endpoint, ImpexEndpoint):

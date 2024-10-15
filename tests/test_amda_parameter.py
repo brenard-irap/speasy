@@ -65,10 +65,12 @@ class ParameterRequests(unittest.TestCase):
             self.assertTrue(isinstance(self.dataset[item], spz.SpeasyVariable))
 
     def test_restricted_time_range(self):
-        from speasy.webservices.amda._impl import credential_are_valid
+        from speasy.core.impex.client import ImpexClient
         from speasy.core import make_utc_datetime
 
-        if credential_are_valid():
+        impex_client = ImpexClient()
+
+        if impex_client.credential_are_valid():
             self.skipTest("Should only run when credentials are not valid")
         dataset = None
         for dataset in spz.inventories.flat_inventories.amda.datasets.values():
@@ -76,7 +78,7 @@ class ParameterRequests(unittest.TestCase):
                 if make_utc_datetime(dataset.timeRestriction)< make_utc_datetime(dataset.stop_date):
                     break
         if dataset is not None:
-            from speasy.webservices.amda.exceptions import MissingCredentials
+            from speasy.core.impex.exceptions import MissingCredentials
             with self.assertRaises(MissingCredentials):
                 spz.amda.get_dataset(dataset, make_utc_datetime(dataset.timeRestriction),
                                      make_utc_datetime(dataset.timeRestriction) + timedelta(minutes=1))
