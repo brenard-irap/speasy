@@ -33,4 +33,4 @@ __author__ = """Alexis Jeandet"""
 __email__ = 'alexis.jeandet@member.fsf.org'
 __version__ = '0.1.0'
 
-from .ws import CLWeb_Webservice, ProductType
+from .ws import CLWeb_Webservice

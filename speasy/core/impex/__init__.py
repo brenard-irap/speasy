@@ -1,9 +1,11 @@
 import logging
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Dict, Optional, List
 from types import SimpleNamespace
 
-from ...core.inventory.indexes import SpeasyIndex
+from ...core.inventory.indexes import ComponentIndex, DatasetIndex, ParameterIndex, SpeasyIndex, \
+                                      TimetableIndex, CatalogIndex
 from ...core.cdf import load_variable as cdf_load_variable
 from ...products.variable import SpeasyVariable, merge
 
@@ -11,11 +13,22 @@ from ...inventories import flat_inventories
 
 from .parser import ImpexXMLParser, to_xmlid
 from .client import ImpexClient, ImpexEndpoint
-from .utils import load_catalog, load_timetable
+from .utils import load_catalog, load_timetable, is_private, is_public
 from .exceptions import MissingCredentials
 
 
 log = logging.getLogger(__name__)
+
+
+class ImpexProductType(Enum):
+    """Enumeration of the type of products available in AMDA_Webservice.
+    """
+    UNKNOWN = 0
+    DATASET = 1
+    PARAMETER = 2
+    COMPONENT = 3
+    TIMETABLE = 4
+    CATALOG = 5
 
 
 class ImpexProvider:
@@ -57,9 +70,11 @@ class ImpexProvider:
             root.TimeTables = SpeasyIndex(name='TimeTables', provider=self.provider_name, uid='TimeTables')
             public_tt = ImpexXMLParser.parse(get_time_table_list_xml, self.provider_name, name_mapping)
             if hasattr(public_tt, 'ws'):
-                shared_root = public_tt.ws.timetabList # CLWeb case
+                # CLWeb case
+                shared_root = public_tt.ws.timetabList
             else:
-                shared_root = public_tt.timeTableList # AMDA case
+                # AMDA case
+                shared_root = public_tt.timeTableList
             root.TimeTables.SharedTimeTables = SpeasyIndex(name='SharedTimeTables', provider=self.provider_name,
                                                            uid='SharedTimeTables',
                                                            meta=shared_root.__dict__)
@@ -87,9 +102,11 @@ class ImpexProvider:
                 user_tt = ImpexXMLParser.parse(get_user_time_table_list_xml,
                                                self.provider_name, name_mapping, is_public=False)
                 if hasattr(user_tt, 'ws'):
-                    public_root = user_tt.ws.timetabList  # CLWeb case
+                    # CLWeb case
+                    public_root = user_tt.ws.timetabList
                 else:
-                    public_root = user_tt.timetabList  # AMDA case
+                    # AMDA case
+                    public_root = user_tt.timetabList
                 root.TimeTables.MyTimeTables = SpeasyIndex(name='MyTimeTables', provider=self.provider_name,
                                                            uid='MyTimeTables', meta=public_root.__dict__)
 
@@ -120,6 +137,7 @@ class ImpexProvider:
                                         use_credentials=use_credentials, **kwargs)
         # check status until done
         if url is not None:
+            var = None
             if kwargs.get('output_format', self.client.output_format) in ["CDF_ISTP", "CDF"]:
                 var = cdf_load_variable(variable=product_variables[0], file=url)
             elif hasattr(self, 'load_specific_output_format'):
@@ -177,7 +195,8 @@ class ImpexProvider:
             timetable = load_timetable(filename=get_timetable_url)
             if timetable:
                 timetable.meta.update(
-                    flat_inventories.__dict__[self.provider_name].timetables.get(timetable_id, SimpleNamespace()).__dict__)
+                    flat_inventories.__dict__[self.provider_name].timetables.get(timetable_id,
+                                                                                 SimpleNamespace()).__dict__)
                 log.debug(f'Loaded timetable: id = {timetable_id}')  # lgtm[py/clear-text-logging-sensitive-data]
             else:
                 log.debug('Got None')
@@ -206,3 +225,78 @@ class ImpexProvider:
 
     def dl_user_catalog(self, catalog_id: str, **kwargs):
         return self.dl_catalog(catalog_id, use_credentials=True, **kwargs)
+
+    def product_type(self, product_id: str or SpeasyIndex) -> ImpexProductType:
+        """Returns product type for any known ADMA product from its index or ID.
+
+        Parameters
+        ----------
+        product_id: str or AMDAIndex
+            product id
+
+        Returns
+        -------
+        ImpexProductType
+            Type of product IE ImpexProductType.DATASET, ImpexProductType.TIMETABLE, ...
+
+        Examples
+        --------
+
+        >>> import speasy as spz
+        >>> spz.amda.product_type("imf")
+        <ImpexProductType.PARAMETER: 2>
+        >>> spz.amda.product_type("ace-imf-all")
+        <ImpexProductType.DATASET: 1>
+        """
+        product_id = to_xmlid(product_id)
+        if product_id in flat_inventories.__dict__[self.provider_name].datasets:
+            return ImpexProductType.DATASET
+        if product_id in flat_inventories.__dict__[self.provider_name].parameters:
+            return ImpexProductType.PARAMETER
+        if product_id in flat_inventories.__dict__[self.provider_name].components:
+            return ImpexProductType.COMPONENT
+        if product_id in flat_inventories.__dict__[self.provider_name].timetables:
+            return ImpexProductType.TIMETABLE
+        if product_id in flat_inventories.__dict__[self.provider_name].catalogs:
+            return ImpexProductType.CATALOG
+
+        return ImpexProductType.UNKNOWN
+
+    def find_parent_dataset(self, product_id: str or DatasetIndex or ParameterIndex or ComponentIndex) -> Optional[str]:
+        product_id = to_xmlid(product_id)
+        product_type = self.product_type(product_id)
+        if product_type is ImpexProductType.DATASET:
+            return product_id
+        elif product_type in (ImpexProductType.COMPONENT, ImpexProductType.PARAMETER):
+            for dataset in flat_inventories.__dict__[self.provider_name].datasets.values():
+                if product_id in dataset:
+                    return to_xmlid(dataset)
+
+    def is_user_prod(self, product_id: str or SpeasyIndex, collection: Dict):
+        xmlid = to_xmlid(product_id)
+        if xmlid in collection:
+            return is_private(collection[xmlid])
+        return False
+
+    def list_datasets(self) -> List[DatasetIndex]:
+        return list(filter(is_public, flat_inventories.__dict__[self.provider_name].datasets.values()))
+
+    def list_parameters(self, dataset_id: Optional[str or DatasetIndex] = None) -> List[ParameterIndex]:
+        if dataset_id is not None:
+            return list(flat_inventories.__dict__[self.provider_name].datasets[to_xmlid(dataset_id)])
+        return list(filter(is_public, flat_inventories.__dict__[self.provider_name].parameters.values()))
+
+    def list_user_parameters(self) -> List[ParameterIndex]:
+        return list(filter(is_private, flat_inventories.__dict__[self.provider_name].parameters.values()))
+
+    def list_timetables(self) -> List[TimetableIndex]:
+        return list(filter(is_public, flat_inventories.__dict__[self.provider_name].timetables.values()))
+
+    def list_user_timetables(self) -> List[TimetableIndex]:
+        return list(filter(is_private, flat_inventories.__dict__[self.provider_name].timetables.values()))
+
+    def list_catalogs(self) -> List[CatalogIndex]:
+        return list(filter(is_public, flat_inventories.__dict__[self.provider_name].catalogs.values()))
+
+    def list_user_catalogs(self) -> List[CatalogIndex]:
+        return list(filter(is_private, flat_inventories.__dict__[self.provider_name].catalogs.values()))

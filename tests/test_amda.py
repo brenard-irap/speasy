@@ -12,7 +12,7 @@ from ddt import data, ddt, unpack
 from speasy.config import amda as amda_cfg
 from speasy.inventories import flat_inventories
 from speasy.products import SpeasyVariable
-from speasy.webservices.amda import ProductType
+from speasy.core.impex import ImpexProductType
 from speasy.core.impex.exceptions import MissingCredentials
 from speasy.core.impex.parser import ImpexXMLParser, to_xmlid
 from speasy.webservices.amda.utils import load_csv
@@ -223,18 +223,18 @@ class AMDAModule(unittest.TestCase):
         spz.update_inventories()
 
     @data(
-        (spz.amda.list_catalogs()[-1], ProductType.CATALOG),
-        (to_xmlid(spz.amda.list_catalogs()[-1]), ProductType.CATALOG),
-        (spz.amda.list_timetables()[-1], ProductType.TIMETABLE),
-        (to_xmlid(spz.amda.list_timetables()[-1]), ProductType.TIMETABLE),
-        (spz.amda.list_datasets()[-1], ProductType.DATASET),
-        (to_xmlid(spz.amda.list_datasets()[-1]), ProductType.DATASET),
+        (spz.amda.list_catalogs()[-1], ImpexProductType.CATALOG),
+        (to_xmlid(spz.amda.list_catalogs()[-1]), ImpexProductType.CATALOG),
+        (spz.amda.list_timetables()[-1], ImpexProductType.TIMETABLE),
+        (to_xmlid(spz.amda.list_timetables()[-1]), ImpexProductType.TIMETABLE),
+        (spz.amda.list_datasets()[-1], ImpexProductType.DATASET),
+        (to_xmlid(spz.amda.list_datasets()[-1]), ImpexProductType.DATASET),
         (spz.inventories.data_tree.amda.Parameters.ACE.Ephemeris.ace_orb_all.ace_xyz_gse.ace_xyz_gse0,
-         ProductType.COMPONENT),
+         ImpexProductType.COMPONENT),
         (to_xmlid(spz.inventories.data_tree.amda.Parameters.ACE.Ephemeris.ace_orb_all.ace_xyz_gse.ace_xyz_gse0),
-         ProductType.COMPONENT),
-        ('this xml id is unlikely to exist', ProductType.UNKNOWN),
-        (spz.inventories.data_tree.amda.Parameters.ACE, ProductType.UNKNOWN)
+         ImpexProductType.COMPONENT),
+        ('this xml id is unlikely to exist', ImpexProductType.UNKNOWN),
+        (spz.inventories.data_tree.amda.Parameters.ACE, ImpexProductType.UNKNOWN)
     )
     @unpack
     def test_returns_product_type_from_either_id_or_index(self, index, expexted_type):

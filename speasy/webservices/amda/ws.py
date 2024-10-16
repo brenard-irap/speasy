@@ -3,7 +3,6 @@
 
 import logging
 from datetime import datetime
-from enum import Enum
 from typing import Dict, List, Optional, Union
 
 from ...config import amda as amda_cfg
@@ -21,9 +20,8 @@ from ...products.dataset import Dataset
 from ...products.timetable import TimeTable
 from ...products.variable import SpeasyVariable
 
-from ...core.impex import ImpexProvider, ImpexEndpoint
+from ...core.impex import ImpexProvider, ImpexEndpoint, ImpexProductType
 from ...core.impex.parser import to_xmlid
-from ...core.impex.utils import is_public, is_private
 from .utils import load_csv
 
 log = logging.getLogger(__name__)
@@ -110,24 +108,6 @@ def _amda_get_proxy_parameter_args(start_time: datetime, stop_time: datetime, pr
             'output_format': kwargs.get('output_format', amda_cfg.output_format.get())}
 
 
-class ProductType(Enum):
-    """Enumeration of the type of products available in AMDA_Webservice.
-    """
-    UNKNOWN = 0
-    DATASET = 1
-    PARAMETER = 2
-    COMPONENT = 3
-    TIMETABLE = 4
-    CATALOG = 5
-
-
-def _is_user_prod(product_id: str or SpeasyIndex, collection: Dict):
-    xmlid = to_xmlid(product_id)
-    if xmlid in collection:
-        return is_private(collection[xmlid])
-    return False
-
-
 class AMDA_Webservice(DataProvider):
     __datetime_format__ = "%Y-%m-%dT%H:%M:%S.%f"
 
@@ -138,7 +118,7 @@ class AMDA_Webservice(DataProvider):
         pass
 
     @staticmethod
-    def is_server_up(server_url: str = amda_cfg.entry_point()) -> bool:
+    def is_server_up() -> bool:
         return amda_provider.is_server_up()
 
     def build_inventory(self, root: SpeasyIndex):
@@ -148,17 +128,17 @@ class AMDA_Webservice(DataProvider):
         return amda_provider.build_private_inventory(root, amda_name_mapping)
 
     def is_user_catalog(self, catalog_id: str or CatalogIndex):
-        return _is_user_prod(catalog_id, self.flat_inventory.catalogs)
+        return amda_provider.is_user_prod(catalog_id, self.flat_inventory.catalogs)
 
     def is_user_timetable(self, timetable_id: str or TimetableIndex):
-        return _is_user_prod(timetable_id, self.flat_inventory.timetables)
+        return amda_provider.is_user_prod(timetable_id, self.flat_inventory.timetables)
 
     def is_user_parameter(self, parameter_id: str or ParameterIndex):
-        return _is_user_prod(parameter_id, self.flat_inventory.parameters)
+        return amda_provider.is_user_prod(parameter_id, self.flat_inventory.parameters)
 
     def has_time_restriction(self, product_id: str or SpeasyIndex, start_time: str or datetime,
                              stop_time: str or datetime):
-        dataset = self._find_parent_dataset(product_id)
+        dataset = amda_provider.find_parent_dataset(product_id)
         if dataset:
             dataset = self.flat_inventory.datasets[dataset]
             if hasattr(dataset, 'timeRestriction'):
@@ -170,7 +150,7 @@ class AMDA_Webservice(DataProvider):
         return False
 
     def product_version(self, parameter_id: str or ParameterIndex):
-        dataset = self._find_parent_dataset(parameter_id)
+        dataset = amda_provider.find_parent_dataset(parameter_id)
         return self.flat_inventory.datasets[dataset].lastUpdate
 
     def parameter_range(self, parameter_id: str or ParameterIndex) -> Optional[DateTimeRange]:
@@ -181,21 +161,21 @@ class AMDA_Webservice(DataProvider):
 
     def get_data(self, product, start_time=None, stop_time=None,
                  **kwargs) -> Optional[Union[SpeasyVariable, TimeTable, Catalog, Dataset]]:
-        product_t = self.product_type(product)
-        if product_t == ProductType.DATASET and start_time and stop_time:
+        product_t = amda_provider.product_type(product)
+        if product_t == ImpexProductType.DATASET and start_time and stop_time:
             return self.get_dataset(dataset_id=product, start=start_time, stop=stop_time, **kwargs)
-        if product_t == ProductType.PARAMETER and start_time and stop_time:
+        if product_t == ImpexProductType.PARAMETER and start_time and stop_time:
             if self.is_user_parameter(product):
                 return self.get_user_parameter(parameter_id=product,
                                                start_time=start_time, stop_time=stop_time, **kwargs)
             else:
                 return self.get_parameter(product=product, start_time=start_time, stop_time=stop_time, **kwargs)
-        if product_t == ProductType.CATALOG:
+        if product_t == ImpexProductType.CATALOG:
             if self.is_user_catalog(product):
                 return self.get_user_catalog(catalog_id=product, **kwargs)
             else:
                 return self.get_catalog(catalog_id=product, **kwargs)
-        if product_t == ProductType.TIMETABLE:
+        if product_t == ImpexProductType.TIMETABLE:
             if self.is_user_timetable(product):
                 return self.get_user_timetable(timetable_id=product, **kwargs)
             else:
@@ -231,7 +211,6 @@ class AMDA_Webservice(DataProvider):
                                        output_format=output_format or amda_cfg.output_format(), **kwargs)
 
     def get_product_variables(self, product_id: str or SpeasyIndex):
-        print(product_id)
         product_id = to_xmlid(product_id)
         return [product_id]
 
@@ -306,221 +285,26 @@ class AMDA_Webservice(DataProvider):
     def get_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
         return amda_provider.dl_catalog(to_xmlid(catalog_id), **kwargs)
 
+    def list_datasets(self) -> List[DatasetIndex]:
+        return amda_provider.list_datasets()
+
     def list_parameters(self, dataset_id: Optional[str or DatasetIndex] = None) -> List[ParameterIndex]:
-
-        """Get the list of parameter indexes available in AMDA or a given dataset
-
-        Parameters
-        ----------
-        dataset_id: Optional[str or AMDADatasetIndex]
-            optional parent dataset id
-
-        Returns
-        -------
-        List[AMDAParameterIndex]
-            the list of parameter indexes
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> amda_parameters = spz.amda.list_parameters()
-        >>> len(amda_parameters) > 0
-        True
-        >>> amda_parameters[0]
-        <ParameterIndex: ...>
-
-
-        """
-
-        if dataset_id is not None:
-            return list(self.flat_inventory.datasets[to_xmlid(dataset_id)])
-        return list(filter(is_public, self.flat_inventory.parameters.values()))
-
-    def list_catalogs(self) -> List[CatalogIndex]:
-        """Get the list of public catalog IDs:
-
-        Returns
-        -------
-        List[AMDACatalogIndex]
-            list of catalog IDs
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> amda_catalogs = spz.amda.list_catalogs()
-        >>> len(amda_catalogs) > 0
-        True
-        >>> amda_catalogs[0]
-        <CatalogIndex: model_regions_plasmas_mms_2019>
-
-        """
-        return list(filter(is_public, self.flat_inventory.catalogs.values()))
-
-    def list_user_timetables(self) -> List[TimetableIndex]:
-        """Get the list of user timetables. User timetable are represented as dictionary objects.
-
-        Returns
-        -------
-        List[AMDATimetableIndex]
-            list of user timetables.
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> spz.amda.list_user_timetables() # doctest: +SKIP
-        [<TimetableIndex: test_alexis>, <TimetableIndex: test_alexis2>, <TimetableIndex: tt3>]
-
-        Warnings
-        --------
-           Calling :meth:`~speasy.amda.amda.AMDA_Webservice.get_user_timetables` without having defined AMDA_Webservice
-           login credentials will result in a :class:`~speasy.config.exceptions.UndefinedConfigEntry`
-           exception being raised.
-
-
-        """
-        # get list of private parameters
-        return list(filter(is_private, self.flat_inventory.timetables.values()))
-
-    def list_user_catalogs(self) -> List[CatalogIndex]:
-        """Get the list of user catalogs. User catalogs are represented as dictionary objects.
-
-        Returns
-        -------
-        List[AMDACatalogIndex]
-            list of user catalogs.
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> spz.amda.list_user_catalogs() # doctest: +SKIP
-        [<CatalogIndex: MyCatalog>]
-
-        Warnings
-        --------
-           Calling :meth:`~speasy.amda.amda.AMDA_Webservice.get_user_catalogs` without having defined AMDA_Webservice
-           login credentials will result in a :class:`~speasy.config.exceptions.UndefinedConfigEntry`
-           exception being raised.
-
-
-        """
-        # get list of private parameters
-        return list(filter(is_private, self.flat_inventory.catalogs.values()))
+        return amda_provider.list_parameters(dataset_id)
 
     def list_user_parameters(self) -> List[ParameterIndex]:
-        """Get the list of user parameters. User parameters are represented as dictionary objects.
-
-        Returns
-        -------
-        List[AMDAParameterIndex]
-            list of user parameters
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> spz.amda.list_user_parameters() # doctest: +SKIP
-        [<ParameterIndex: test_param>]
-
-        Warnings
-        --------
-           Calling :meth:`~speasy.amda.amda.AMDA_Webservice.get_user_parameter` without having defined AMDA_Webservice
-           login credentials will result in a :class:`~speasy.config.exceptions.UndefinedConfigEntry`
-           exception being raised.
-
-
-        """
-        # get list of private parameters
-        return list(filter(is_private, self.flat_inventory.parameters.values()))
+        return amda_provider.list_user_parameters()
 
     def list_timetables(self) -> List[TimetableIndex]:
-        """Get list of public timetables.
+        return amda_provider.list_timetables()
 
-        Returns
-        -------
-        List[AMDATimetableIndex]
-            list of timetable IDs.
+    def list_user_timetables(self) -> List[TimetableIndex]:
+        return amda_provider.list_user_timetables()
 
-        Examples
-        --------
+    def list_catalogs(self) -> List[CatalogIndex]:
+        return amda_provider.list_catalogs()
 
-        >>> import speasy as spz
-        >>> spz.amda.list_timetables()[::50]
-        [<TimetableIndex: ...>, <TimetableIndex: ...>, <TimetableIndex: ...>]
+    def list_user_catalogs(self) -> List[CatalogIndex]:
+        return amda_provider.list_user_catalogs()
 
-        """
-        return list(filter(is_public, self.flat_inventory.timetables.values()))
-
-    def list_datasets(self) -> List[DatasetIndex]:
-        """Get the list of dataset id available in AMDA_Webservice
-
-        Returns
-        -------
-        List[AMDADatasetIndex]
-            list if dataset ids
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> amda_datasets = spz.amda.list_datasets()
-        >>> len(amda_datasets) > 0
-        True
-        >>> amda_datasets[0]
-        <DatasetIndex: ...>
-        >>> amda_datasets[0].desc
-        '...'
-
-        """
-        return list(filter(is_public, self.flat_inventory.datasets.values()))
-
-    def _find_parent_dataset(self, product_id: str or DatasetIndex or ParameterIndex or ComponentIndex) -> Optional[
-        str]:
-
-        product_id = to_xmlid(product_id)
-        product_type = self.product_type(product_id)
-        if product_type is ProductType.DATASET:
-            return product_id
-        elif product_type in (ProductType.COMPONENT, ProductType.PARAMETER):
-            for dataset in self.flat_inventory.datasets.values():
-                if product_id in dataset:
-                    return to_xmlid(dataset)
-
-    def product_type(self, product_id: str or SpeasyIndex) -> ProductType:
-        """Returns product type for any known ADMA product from its index or ID.
-
-        Parameters
-        ----------
-        product_id: str or AMDAIndex
-            product id
-
-        Returns
-        -------
-        ProductType
-            Type of product IE ProductType.DATASET, ProductType.TIMETABLE, ...
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> spz.amda.product_type("imf")
-        <ProductType.PARAMETER: 2>
-        >>> spz.amda.product_type("ace-imf-all")
-        <ProductType.DATASET: 1>
-        """
-        product_id = to_xmlid(product_id)
-        if product_id in self.flat_inventory.datasets:
-            return ProductType.DATASET
-        if product_id in self.flat_inventory.parameters:
-            return ProductType.PARAMETER
-        if product_id in self.flat_inventory.components:
-            return ProductType.COMPONENT
-        if product_id in self.flat_inventory.timetables:
-            return ProductType.TIMETABLE
-        if product_id in self.flat_inventory.catalogs:
-            return ProductType.CATALOG
-
-        return ProductType.UNKNOWN
+    def product_type(self, product_id: str or SpeasyIndex) -> ImpexProductType:
+        return amda_provider.product_type(product_id)

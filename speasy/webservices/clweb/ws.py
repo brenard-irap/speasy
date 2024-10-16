@@ -23,7 +23,7 @@ from ...products.dataset import Dataset
 from ...products.timetable import TimeTable
 from ...products.variable import SpeasyVariable
 
-from ...core.impex import ImpexProvider, ImpexEndpoint
+from ...core.impex import ImpexProvider, ImpexEndpoint, ImpexProductType
 from ...core.impex.parser import to_xmlid
 
 
@@ -80,15 +80,6 @@ def _clweb_get_proxy_parameter_args(start_time: datetime, stop_time: datetime, p
             'output_format': kwargs.get('output_format', clweb_cfg.output_format.get())}
 
 
-class ProductType(Enum):
-    """Enumeration of the type of products available in CL_Webservice.
-    """
-    UNKNOWN = 0
-    PARAMETER = 1
-    COMPONENT = 2
-    TIMETABLE = 3
-
-
 class CLWeb_Webservice(DataProvider):
     __datetime_format__ = "%Y-%m-%dT%H:%M:%S.%f"
 
@@ -108,9 +99,6 @@ class CLWeb_Webservice(DataProvider):
     def build_private_inventory(self, root: SpeasyIndex):
         return clweb_provider.build_private_inventory(root, clweb_name_mapping)
 
-    def product_version(self, parameter_id: str or ParameterIndex):
-        return 0
-
     def parameter_range(self, parameter_id: str or ParameterIndex) -> Optional[DateTimeRange]:
         return self._parameter_range(parameter_id)
 
@@ -119,10 +107,10 @@ class CLWeb_Webservice(DataProvider):
 
     def get_data(self, product, start_time=None, stop_time=None,
                  **kwargs) -> Optional[Union[SpeasyVariable, TimeTable, Catalog, Dataset]]:
-        product_t = self.product_type(product)
-        if product_t == ProductType.PARAMETER and start_time and stop_time:
+        product_t = clweb_provider.product_type(product)
+        if product_t == ImpexProductType.PARAMETER and start_time and stop_time:
             return self.get_parameter(product=product, start_time=start_time, stop_time=stop_time, **kwargs)
-        if product_t == ProductType.TIMETABLE:
+        if product_t == ImpexProductType.TIMETABLE:
             return self.get_timetable(timetable_id=product, **kwargs)
 
         raise ValueError(f"Unknown product: {product}")
@@ -143,7 +131,7 @@ class CLWeb_Webservice(DataProvider):
         PROXY_ALLOWED_KWARGS + CACHE_ALLOWED_KWARGS + GET_DATA_ALLOWED_KWARGS)
     @EnsureUTCDateTime()
     @ParameterRangeCheck()
-    @Cacheable(prefix=clweb_provider_name, version=product_version, fragment_hours=lambda x: 12,
+    @Cacheable(prefix=clweb_provider_name, version=None, fragment_hours=lambda x: 12,
                entry_name=_clweb_cache_entry_name)
     @Proxyfiable(GetProduct, _clweb_get_proxy_parameter_args)
     def _get_parameter(self, product, start_time, stop_time,
@@ -158,24 +146,14 @@ class CLWeb_Webservice(DataProvider):
     def get_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
         return clweb_provider.dl_timetable(to_xmlid(timetable_id), **kwargs)
 
+    def list_datasets(self) -> List[DatasetIndex]:
+        return clweb_provider.list_datasets()
+
     def list_parameters(self, dataset_id: Optional[str or DatasetIndex] = None) -> List[ParameterIndex]:
-        if dataset_id is not None:
-            return list(self.flat_inventory.datasets[to_xmlid(dataset_id)])
-        return list(self.flat_inventory.parameters.values())
+        return clweb_provider.list_parameters(dataset_id)
 
     def list_timetables(self) -> List[TimetableIndex]:
-        return list(self.flat_inventory.timetables.values())
+        return clweb_provider.list_timetables()
 
-    def list_datasets(self) -> List[DatasetIndex]:
-        return list(self.flat_inventory.datasets.values())
-
-    def product_type(self, product_id: str or SpeasyIndex) -> ProductType:
-        product_id = to_xmlid(product_id)
-        if product_id in self.flat_inventory.parameters:
-            return ProductType.PARAMETER
-        if product_id in self.flat_inventory.components:
-            return ProductType.COMPONENT
-        if product_id in self.flat_inventory.timetables:
-            return ProductType.TIMETABLE
-
-        return ProductType.UNKNOWN
+    def list_user_timetables(self) -> List[TimetableIndex]:
+        return clweb_provider.list_user_timetables()
