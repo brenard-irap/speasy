@@ -37,25 +37,11 @@ def _parse_header(fd, expected_parameter: str):
 
 
 def load_csv(filename: str, expected_parameter: str) -> SpeasyVariable:
-    """Load a CSV file
-
-    Parameters
-    ----------
-    filename: str
-        CSV filename
-
-    Returns
-    -------
-    SpeasyVariable
-        CSV contents
-    """
     with any_loc_open(filename, mode='rb') as csv:
         with tempfile.TemporaryFile() as fd:
             # _copy_data(csv, fd)
             fd.write(csv.read())
             fd.seek(0)
-            line = fd.readline().decode()
-            meta = {}
             y = None
             y_label = None
             meta = _parse_header(fd, expected_parameter)

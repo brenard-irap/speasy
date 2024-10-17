@@ -4,8 +4,8 @@ from json.decoder import JSONDecodeError
 import logging
 import time
 
-from ...core.http import is_server_up
 from ...core import http
+from ...core.http import is_server_up
 
 from .exceptions import MissingCredentials
 
@@ -59,7 +59,9 @@ class ImpexClient:
             return False
 
     def is_alive(self):
-        pass
+        if not self.is_capable(ImpexEndpoint.ISALIVE):
+            return True
+        return self._send_request(ImpexEndpoint.ISALIVE)
 
     def auth(self):
         return self._send_request(ImpexEndpoint.AUTH)
@@ -82,8 +84,10 @@ class ImpexClient:
             params['userID'], params['password'] = self.get_credentials()
         return self._send_indirect_request(ImpexEndpoint.LISTCAT, params=params)
 
-    def get_derived_parameter_list(self, use_credentials=False):
-        pass
+    def get_derived_parameter_list(self):
+        params = {}
+        params['userID'], params['password'] = self.get_credentials()
+        return self._send_indirect_request(ImpexEndpoint.LISTPARAM, params=params)
 
     def get_status(self):
         pass
@@ -107,7 +111,7 @@ class ImpexClient:
         return self._send_request(ImpexEndpoint.GETPARAM, params=params,
                                   extra_http_headers=extra_http_headers)
 
-    def get_timetable(self, tt_id, use_credentials=False, **kwargs):
+    def get_timetable(self, tt_id, use_credentials=False):
         params = {
             'ttID': tt_id
         }
@@ -115,7 +119,7 @@ class ImpexClient:
             params['userID'], params['password'] = self.get_credentials()
         return self._send_request(ImpexEndpoint.GETTT, params=params)
 
-    def get_catalog(self, catalog_id, use_credentials=False, **kwargs):
+    def get_catalog(self, catalog_id, use_credentials=False):
         params = {
             'catID': catalog_id
         }
@@ -140,11 +144,10 @@ class ImpexClient:
         return None
 
     def _send_request(self, endpoint: ImpexEndpoint, params: Dict = None, timeout: int = http.DEFAULT_TIMEOUT,
-                      extra_http_headers: Dict or None = None) -> str or None:
+                      extra_http_headers: Dict or None = None) -> str or bool or None:
         url = self._request_url(endpoint)
         params = params or {}
         http_headers = extra_http_headers or {}
-        # params['token'] = token(server_url=server_url)
         r = http.get(url, params=params, headers=http_headers, timeout=timeout)
         if r.status_code != 200:
             log.debug(f"Failed: {r.status_code}")
@@ -155,7 +158,7 @@ class ImpexClient:
                 log.debug(f"success: {js['dataFileURLs']}")
                 return js['dataFileURLs']
             elif "success" in js and (js["success"] is True) and ("status" in js) and \
-                (js["status"] == "in progress") and self.is_capable(ImpexEndpoint.GETSTATUS):
+                 (js["status"] == "in progress") and self.is_capable(ImpexEndpoint.GETSTATUS):
                 log.warning("This request duration is too long, consider reducing time range")
                 while True:
                     default_sleep_time = 10.
@@ -165,6 +168,8 @@ class ImpexClient:
                     status = http.get(url, params=js, headers=http_headers).json()
                     if status is not None and status["status"] == "done":
                         return status["dataFileURLs"]
+            elif "alive" in js and (js["alive"] is True):
+                return True
             else:
                 log.debug(f"Failed: {r.text}")
         except JSONDecodeError:

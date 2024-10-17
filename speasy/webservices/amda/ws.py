@@ -3,95 +3,35 @@
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional
 
 from ...config import amda as amda_cfg
 from ...core import AllowedKwargs, make_utc_datetime, EnsureUTCDateTime
+from ...core.http import is_server_up
 from ...core.cache import CACHE_ALLOWED_KWARGS, Cacheable, CacheCall
-from ...core.dataprovider import (GET_DATA_ALLOWED_KWARGS, DataProvider,
-                                  ParameterRangeCheck)
+from ...core.dataprovider import (GET_DATA_ALLOWED_KWARGS, ParameterRangeCheck)
 from ...core.datetime_range import DateTimeRange
-from ...core.inventory.indexes import (CatalogIndex, ComponentIndex,
-                                       DatasetIndex, ParameterIndex,
+from ...core.inventory.indexes import (CatalogIndex, ParameterIndex,
                                        SpeasyIndex, TimetableIndex)
 from ...core.proxy import PROXY_ALLOWED_KWARGS, GetProduct, Proxyfiable
 from ...products.catalog import Catalog
-from ...products.dataset import Dataset
 from ...products.timetable import TimeTable
 from ...products.variable import SpeasyVariable
 
-from ...core.impex import ImpexProvider, ImpexEndpoint, ImpexProductType
-from ...core.impex.parser import to_xmlid
+from ...core.impex import ImpexProvider, ImpexEndpoint
 from .utils import load_csv
 
 log = logging.getLogger(__name__)
 
 amda_provider_name = 'amda'
-amda_capabilities = [ ImpexEndpoint.AUTH, ImpexEndpoint.OBSTREE, ImpexEndpoint.GETPARAM, ImpexEndpoint.LISTTT,
-                      ImpexEndpoint.GETTT, ImpexEndpoint.LISTCAT, ImpexEndpoint.GETCAT ]
+amda_capabilities = [ImpexEndpoint.AUTH, ImpexEndpoint.OBSTREE, ImpexEndpoint.GETPARAM, ImpexEndpoint.LISTTT,
+                     ImpexEndpoint.GETTT, ImpexEndpoint.LISTCAT, ImpexEndpoint.GETCAT, ImpexEndpoint.LISTPARAM]
 amda_name_mapping = {
     "dataset": "xmlid",
     "parameter": "xmlid",
     "folder": "name",
     "component": "xmlid"
 }
-
-
-class AMDAProvider(ImpexProvider):
-    def load_specific_output_format(self, filename: str, expected_parameter: str):
-        return load_csv(filename, expected_parameter)
-
-
-amda_provider = AMDAProvider(provider_name=amda_provider_name, server_url=amda_cfg.entry_point()+"/php/rest",
-                             max_chunk_size_days=amda_cfg.max_chunk_size_days(),
-                             capabilities=amda_capabilities,
-                             username=amda_cfg.username(), password=amda_cfg.password())
-
-
-@CacheCall(cache_retention=24 * 60 * 60, is_pure=True)
-def get_obs_data_tree() -> str or None:
-    return amda_provider.client.get_obs_data_tree()
-
-
-@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-def get_timetables_xml_tree() -> str or None:
-    return amda_provider.client.get_time_table_list()
-
-
-@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-def get_user_timetables_xml_tree() -> str or None:
-    return amda_provider.client.get_time_table_list(use_credentials=True)
-
-
-@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-def get_timetable(tt_id: str, use_credentials: bool, **kwargs) -> str or None:
-    return amda_provider.client.get_timetable(tt_id, use_credentials=use_credentials, **kwargs)
-
-
-@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-def get_catalogs_xml_tree() -> str or None:
-    return amda_provider.client.get_catalog_list()
-
-
-@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-def get_user_catalogs_xml_tree() -> str or None:
-    return amda_provider.client.get_catalog_list(use_credentials=True)
-
-
-@CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-def get_catalog(catalog_id: str, use_credentials: bool, **kwargs) -> str or None:
-    return amda_provider.client.get_catalog(catalog_id, use_credentials=use_credentials, **kwargs)
-
-
-amda_provider.set_cache_handlers({
-    'get_obs_data_tree': get_obs_data_tree,
-    'get_time_table_list': get_timetables_xml_tree,
-    'get_user_time_table_list': get_user_timetables_xml_tree,
-    'get_timetable': get_timetable,
-    'get_catalog_list': get_catalogs_xml_tree,
-    'get_user_catalog_list': get_user_catalogs_xml_tree,
-    'get_catalog': get_catalog
-})
 
 
 def _amda_cache_entry_name(prefix: str, product: str, start_time: str, **kwargs):
@@ -108,37 +48,24 @@ def _amda_get_proxy_parameter_args(start_time: datetime, stop_time: datetime, pr
             'output_format': kwargs.get('output_format', amda_cfg.output_format.get())}
 
 
-class AMDA_Webservice(DataProvider):
-    __datetime_format__ = "%Y-%m-%dT%H:%M:%S.%f"
-
+class AMDA_Webservice(ImpexProvider):
     def __init__(self):
-        DataProvider.__init__(self, provider_name=amda_provider_name)
-
-    def __del__(self):
-        pass
+        ImpexProvider.__init__(self, provider_name=amda_provider_name, server_url=amda_cfg.entry_point()+"/php/rest",
+                               max_chunk_size_days=amda_cfg.max_chunk_size_days(),
+                               capabilities=amda_capabilities, name_mapping=amda_name_mapping,
+                               username=amda_cfg.username(), password=amda_cfg.password(),
+                               output_format=amda_cfg.output_format())
 
     @staticmethod
-    def is_server_up() -> bool:
-        return amda_provider.is_server_up()
-
-    def build_inventory(self, root: SpeasyIndex):
-        return amda_provider.build_inventory(root, amda_name_mapping)
-
-    def build_private_inventory(self, root: SpeasyIndex):
-        return amda_provider.build_private_inventory(root, amda_name_mapping)
-
-    def is_user_catalog(self, catalog_id: str or CatalogIndex):
-        return amda_provider.is_user_prod(catalog_id, self.flat_inventory.catalogs)
-
-    def is_user_timetable(self, timetable_id: str or TimetableIndex):
-        return amda_provider.is_user_prod(timetable_id, self.flat_inventory.timetables)
-
-    def is_user_parameter(self, parameter_id: str or ParameterIndex):
-        return amda_provider.is_user_prod(parameter_id, self.flat_inventory.parameters)
+    def is_server_up():
+        try:
+            return is_server_up(url=amda_cfg.entry_point())
+        except:  # lgtm [py/catch-base-exception]
+            return False
 
     def has_time_restriction(self, product_id: str or SpeasyIndex, start_time: str or datetime,
                              stop_time: str or datetime):
-        dataset = amda_provider.find_parent_dataset(product_id)
+        dataset = self.find_parent_dataset(product_id)
         if dataset:
             dataset = self.flat_inventory.datasets[dataset]
             if hasattr(dataset, 'timeRestriction'):
@@ -150,161 +77,63 @@ class AMDA_Webservice(DataProvider):
         return False
 
     def product_version(self, parameter_id: str or ParameterIndex):
-        dataset = amda_provider.find_parent_dataset(parameter_id)
+        dataset = self.find_parent_dataset(parameter_id)
         return self.flat_inventory.datasets[dataset].lastUpdate
 
-    def parameter_range(self, parameter_id: str or ParameterIndex) -> Optional[DateTimeRange]:
-        return self._parameter_range(parameter_id)
+    def load_specific_output_format(self, filename: str, expected_parameter: str):
+        return load_csv(filename, expected_parameter)
 
-    def dataset_range(self, dataset_id: str or DatasetIndex) -> Optional[DateTimeRange]:
-        return self._dataset_range(dataset_id)
+    @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+    def get_timetable(self, timetable_id: str, **kwargs) -> str or None:
+        return super().get_timetable(timetable_id, **kwargs)
 
-    def get_data(self, product, start_time=None, stop_time=None,
-                 **kwargs) -> Optional[Union[SpeasyVariable, TimeTable, Catalog, Dataset]]:
-        product_t = amda_provider.product_type(product)
-        if product_t == ImpexProductType.DATASET and start_time and stop_time:
-            return self.get_dataset(dataset_id=product, start=start_time, stop=stop_time, **kwargs)
-        if product_t == ImpexProductType.PARAMETER and start_time and stop_time:
-            if self.is_user_parameter(product):
-                return self.get_user_parameter(parameter_id=product,
-                                               start_time=start_time, stop_time=stop_time, **kwargs)
-            else:
-                return self.get_parameter(product=product, start_time=start_time, stop_time=stop_time, **kwargs)
-        if product_t == ImpexProductType.CATALOG:
-            if self.is_user_catalog(product):
-                return self.get_user_catalog(catalog_id=product, **kwargs)
-            else:
-                return self.get_catalog(catalog_id=product, **kwargs)
-        if product_t == ImpexProductType.TIMETABLE:
-            if self.is_user_timetable(product):
-                return self.get_user_timetable(timetable_id=product, **kwargs)
-            else:
-                return self.get_timetable(timetable_id=product, **kwargs)
-        raise ValueError(f"Unknown product: {product}")
-
-    def get_user_parameter(self, parameter_id: str or ParameterIndex, start_time: datetime or str,
-                           stop_time: datetime or str, **kwargs) -> Optional[SpeasyVariable]:
-        parameter_id = to_xmlid(parameter_id)
-        start_time, stop_time = make_utc_datetime(start_time), make_utc_datetime(stop_time)
-        return amda_provider.dl_user_parameter(parameter_id=parameter_id, start_time=start_time, stop_time=stop_time)
+    @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+    def get_catalog(self, catalog_id: str, **kwargs) -> str or None:
+        return super().get_catalog(catalog_id, **kwargs)
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention())
     def get_user_timetable(self, timetable_id: str or TimetableIndex) -> Optional[TimeTable]:
-        timetable_id = to_xmlid(timetable_id)
-        return amda_provider.dl_user_timetable(to_xmlid(timetable_id))
+        return super().get_user_timetable(timetable_id)
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention())
     def get_user_catalog(self, catalog_id: str or CatalogIndex) -> Optional[Catalog]:
-        catalog_id = to_xmlid(catalog_id)
-        return amda_provider.dl_user_catalog(to_xmlid(catalog_id))
+        return super().get_user_catalog(catalog_id)
 
-    def get_parameter(self, product, start_time, stop_time,
-                      extra_http_headers: Dict or None = None, output_format: str or None = None, **kwargs) -> Optional[
-        SpeasyVariable]:
-        if self.has_time_restriction(product, start_time, stop_time):
-            kwargs['disable_proxy'] = True
-            kwargs['restricted_period'] = True
-            return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
-                                       output_format=output_format or amda_cfg.output_format(), **kwargs)
-        else:
-            return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
-                                       output_format=output_format or amda_cfg.output_format(), **kwargs)
+    @CacheCall(cache_retention=24 * 60 * 60, is_pure=True)
+    def get_obs_data_tree(self) -> str or None:
+        return super().get_obs_data_tree()
 
-    def get_product_variables(self, product_id: str or SpeasyIndex):
-        product_id = to_xmlid(product_id)
-        return [product_id]
+    @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+    def get_timetables_tree(self) -> str or None:
+        return super().get_timetables_tree()
+
+    @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+    def get_user_timetables_tree(self) -> str or None:
+        return super().get_user_timetables_tree()
+
+    @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+    def get_catalogs_tree(self) -> str or None:
+        return super().get_catalogs_tree()
+
+    @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+    def get_user_catalogs_tree(self) -> str or None:
+        return super().get_user_catalogs_tree()
+
+    @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
+    def get_derived_parameter_tree(self):
+        return super().get_derived_parameter_tree()
 
     @AllowedKwargs(
         PROXY_ALLOWED_KWARGS + CACHE_ALLOWED_KWARGS + GET_DATA_ALLOWED_KWARGS + ['output_format', 'restricted_period'])
     @EnsureUTCDateTime()
     @ParameterRangeCheck()
-    @Cacheable(prefix="amda", version=product_version, fragment_hours=lambda x: 12, entry_name=_amda_cache_entry_name)
+    @Cacheable(prefix=amda_provider_name, version=product_version, fragment_hours=lambda x: 12,
+               entry_name=_amda_cache_entry_name)
     @Proxyfiable(GetProduct, _amda_get_proxy_parameter_args)
     def _get_parameter(self, product, start_time, stop_time,
                        extra_http_headers: Dict or None = None, output_format: str or None = None,
                        restricted_period=False, **kwargs) -> \
         Optional[
             SpeasyVariable]:
-        log.debug(f'Get data: product = {product}, data start time = {start_time}, data stop time = {stop_time}')
-        return amda_provider.dl_parameter(start_time=start_time, stop_time=stop_time, parameter_id=product,
-                                          extra_http_headers=extra_http_headers,
-                                          output_format=output_format,
-                                          product_variables=self.get_product_variables(product),
-                                          restricted_period=restricted_period,
-                                          time_format='UNIXTIME')
-
-    def get_dataset(self, dataset_id: str or DatasetIndex, start: str or datetime, stop: str or datetime,
-                    **kwargs) -> Dataset or None:
-        """Get dataset contents. Returns list of SpeasyVariable objects, one for each
-        parameter in the dataset.
-
-        Parameters
-        ----------
-        dataset_id: str or AMDADatasetIndex
-            dataset id
-        start: str or datetime
-            desired data start
-        stop: str or datetime
-            desired data end
-
-        Returns
-        -------
-        Dataset or None
-            dataset content as a collection of SpeasyVariable if it succeeds or None
-
-        Examples
-        --------
-
-        >>> import speasy as spz
-        >>> import datetime
-        >>> dataset = spz.amda.get_dataset("ace-imf-all", datetime.datetime(2000,1,1), datetime.datetime(2000,1,2))
-        >>> dataset
-        <Dataset: final / prelim
-                variables: ['|b|', 'b_gse', 'b_gsm']
-                time range: <DateTimeRange: 2000-01-01T00:00:11 -> 2000-01-01T23:59:55>
-
-
-        """
-        ds_range = self.dataset_range(dataset_id)
-        if not ds_range.intersect(DateTimeRange(start, stop)):
-            log.warning(f"You are requesting {dataset_id} outside of its definition range {ds_range}")
-            return None
-
-        dataset_id = to_xmlid(dataset_id)
-        name = self.flat_inventory.datasets[dataset_id].name
-        meta = {k: v for k, v in self.flat_inventory.datasets[dataset_id].__dict__.items() if
-                not isinstance(v, SpeasyIndex)}
-        parameters = self.list_parameters(dataset_id)
-        return Dataset(name=name,
-                       variables={p.name: self.get_parameter(p, start, stop, **kwargs) for p in parameters},
-                       meta=meta)
-
-    def get_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
-        return amda_provider.dl_timetable(to_xmlid(timetable_id), **kwargs)
-
-    def get_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
-        return amda_provider.dl_catalog(to_xmlid(catalog_id), **kwargs)
-
-    def list_datasets(self) -> List[DatasetIndex]:
-        return amda_provider.list_datasets()
-
-    def list_parameters(self, dataset_id: Optional[str or DatasetIndex] = None) -> List[ParameterIndex]:
-        return amda_provider.list_parameters(dataset_id)
-
-    def list_user_parameters(self) -> List[ParameterIndex]:
-        return amda_provider.list_user_parameters()
-
-    def list_timetables(self) -> List[TimetableIndex]:
-        return amda_provider.list_timetables()
-
-    def list_user_timetables(self) -> List[TimetableIndex]:
-        return amda_provider.list_user_timetables()
-
-    def list_catalogs(self) -> List[CatalogIndex]:
-        return amda_provider.list_catalogs()
-
-    def list_user_catalogs(self) -> List[CatalogIndex]:
-        return amda_provider.list_user_catalogs()
-
-    def product_type(self, product_id: str or SpeasyIndex) -> ImpexProductType:
-        return amda_provider.product_type(product_id)
+        return super()._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
+                                      output_format=output_format, restricted_period=restricted_period, **kwargs)

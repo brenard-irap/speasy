@@ -1,13 +1,22 @@
 import logging
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Union
 from types import SimpleNamespace
+import warnings
+
+from ..datetime_range import DateTimeRange
+from ...core.dataprovider import (DataProvider)
+
+from ...core import make_utc_datetime
 
 from ...core.inventory.indexes import ComponentIndex, DatasetIndex, ParameterIndex, SpeasyIndex, \
                                       TimetableIndex, CatalogIndex
 from ...core.cdf import load_variable as cdf_load_variable
 from ...products.variable import SpeasyVariable, merge
+from ...products.catalog import Catalog
+from ...products.dataset import Dataset
+from ...products.timetable import TimeTable
 
 from ...inventories import flat_inventories
 
@@ -31,44 +40,30 @@ class ImpexProductType(Enum):
     CATALOG = 5
 
 
-class ImpexProvider:
-    def __init__(self, provider_name: str, server_url: str,
-                 max_chunk_size_days: int = 10, capabilities: List = None,
-                 username: str = "", password: str = ""):
+class ImpexProvider(DataProvider):
+    def __init__(self, provider_name: str, server_url: str, max_chunk_size_days: int = 10, capabilities: List = None,
+                 username: str = "", password: str = "", name_mapping: Dict = None, output_format: str = 'CDF'):
         self.provider_name = provider_name
         self.server_url = server_url
         self.client = ImpexClient(capabilities=capabilities, server_url=server_url,
-                                  username=username, password=password, output_format='CDF')
+                                  username=username, password=password, output_format=output_format)
+        if not self.client.is_alive():
+            warnings.warn(f"The data provider {provider_name} appears to be under maintenance")
         self.max_chunk_size_days = max_chunk_size_days
-        self.cache_handlers = {}
+        self.name_mapping = name_mapping
+        DataProvider.__init__(self, provider_name=provider_name)
 
-    def set_cache_handlers(self, cache_handlers):
-        self.cache_handlers = cache_handlers
+    def __del__(self):
+        pass
 
-    def is_server_up(self):
-        if not self.client.reachable():
-            return False
-        if self.client.is_capable(ImpexEndpoint.ISALIVE):
-            if not self.client.is_alive():
-                return False
-        return True
-
-    def build_inventory(self, root: SpeasyIndex, name_mapping=None):
-        if 'get_obs_data_tree' in self.cache_handlers:
-            obs_data_tree_xml = self.cache_handlers['get_obs_data_tree']()
-        else:
-            obs_data_tree_xml = self.client.get_obs_data_tree()
-        obs_data_tree = ImpexXMLParser.parse(obs_data_tree_xml, self.provider_name, name_mapping)
+    def build_inventory(self, root: SpeasyIndex):
+        obs_data_tree = ImpexXMLParser.parse(self.get_obs_data_tree(), self.provider_name, self.name_mapping)
         root.Parameters = SpeasyIndex(name='Parameters', provider=self.provider_name, uid='Parameters',
                                       meta=obs_data_tree.dataRoot.dataCenter.__dict__)
 
         if self.client.is_capable(ImpexEndpoint.GETTT):
-            if 'get_time_table_list' in self.cache_handlers:
-                get_time_table_list_xml = self.cache_handlers['get_time_table_list']()
-            else:
-                get_time_table_list_xml = self.client.get_time_table_list()
             root.TimeTables = SpeasyIndex(name='TimeTables', provider=self.provider_name, uid='TimeTables')
-            public_tt = ImpexXMLParser.parse(get_time_table_list_xml, self.provider_name, name_mapping)
+            public_tt = ImpexXMLParser.parse(self.get_timetables_tree(), self.provider_name, self.name_mapping)
             if hasattr(public_tt, 'ws'):
                 # CLWeb case
                 shared_root = public_tt.ws.timetabList
@@ -80,27 +75,19 @@ class ImpexProvider:
                                                            meta=shared_root.__dict__)
 
         if self.client.is_capable(ImpexEndpoint.GETCAT):
-            if 'get_catalog_list' in self.cache_handlers:
-                get_catalog_list_xml = self.cache_handlers['get_catalog_list']()
-            else:
-                get_catalog_list_xml = self.client.get_catalog_list()
             root.Catalogs = SpeasyIndex(name='Catalogs', provider=self.provider_name, uid='Catalogs')
-            public_cat = ImpexXMLParser.parse(get_catalog_list_xml, self.provider_name, name_mapping)
+            public_cat = ImpexXMLParser.parse(self.get_catalogs_tree(), self.provider_name, self.name_mapping)
             root.Catalogs.SharedCatalogs = SpeasyIndex(name='SharedCatalogs', provider=self.provider_name,
                                                        uid='SharedCatalogs',
                                                        meta=public_cat.catalogList.__dict__)
 
         return root
 
-    def build_private_inventory(self, root: SpeasyIndex, name_mapping=None):
+    def build_private_inventory(self, root: SpeasyIndex):
         if self.client.credential_are_valid():
             if self.client.is_capable(ImpexEndpoint.GETTT):
-                if 'get_user_time_table_list' in self.cache_handlers:
-                    get_user_time_table_list_xml = self.cache_handlers['get_user_time_table_list']()
-                else:
-                    get_user_time_table_list_xml = self.client.get_time_table_list(use_credentials=True)
-                user_tt = ImpexXMLParser.parse(get_user_time_table_list_xml,
-                                               self.provider_name, name_mapping, is_public=False)
+                user_tt = ImpexXMLParser.parse(self.get_user_timetables_tree(),
+                                               self.provider_name, self.name_mapping, is_public=False)
                 if hasattr(user_tt, 'ws'):
                     # CLWeb case
                     public_root = user_tt.ws.timetabList
@@ -111,21 +98,139 @@ class ImpexProvider:
                                                            uid='MyTimeTables', meta=public_root.__dict__)
 
             if self.client.is_capable(ImpexEndpoint.GETCAT):
-                if 'get_user_catalog_list' in self.cache_handlers:
-                    get_user_catalog_list_xml = self.cache_handlers['get_user_catalog_list']()
-                else:
-                    get_user_catalog_list_xml = self.client.get_catalog_list(use_credentials=True)
-                user_cat = ImpexXMLParser.parse(get_user_catalog_list_xml, self.provider_name,
-                                                name_mapping, is_public=False)
+                user_cat = ImpexXMLParser.parse(self.get_user_catalogs_tree(), self.provider_name,
+                                                self.name_mapping, is_public=False)
                 root.Catalogs.MyCatalogs = SpeasyIndex(name='MyCatalogs', provider=self.provider_name, uid='MyCatalogs',
                                                        meta=user_cat.catalogList.__dict__)
 
             if self.client.is_capable(ImpexEndpoint.LISTPARAM):
-                user_param = ImpexXMLParser.parse(self.client.get_derived_parameter_list(use_credentials=True),
-                                                  self.provider_name, name_mapping, is_public=False)
+                get_derived_parameter_list_xml = self.client.get_derived_parameter_list()
+                user_param = ImpexXMLParser.parse(get_derived_parameter_list_xml,
+                                                  self.provider_name, self.name_mapping, is_public=False)
                 root.DerivedParameters = SpeasyIndex(name='DerivedParameters', provider=self.provider_name,
                                                      uid='DerivedParameters', meta=user_param.ws.paramList.__dict__)
         return root
+
+    def parameter_range(self, parameter_id: str or ParameterIndex) -> Optional[DateTimeRange]:
+        return self._parameter_range(parameter_id)
+
+    def dataset_range(self, dataset_id: str or DatasetIndex) -> Optional[DateTimeRange]:
+        return self._dataset_range(dataset_id)
+
+    def is_user_catalog(self, catalog_id: str or CatalogIndex):
+        return ImpexProvider.is_user_product(catalog_id, flat_inventories.__dict__[self.provider_name].catalogs)
+
+    def is_user_timetable(self, timetable_id: str or TimetableIndex):
+        return ImpexProvider.is_user_product(timetable_id, flat_inventories.__dict__[self.provider_name].timetables)
+
+    def is_user_parameter(self, parameter_id: str or ParameterIndex):
+        return ImpexProvider.is_user_product(parameter_id, flat_inventories.__dict__[self.provider_name].parameters)
+
+    def get_obs_data_tree(self) -> str or None:
+        return self.client.get_obs_data_tree()
+
+    def get_timetables_tree(self) -> str or None:
+        return self.client.get_time_table_list()
+
+    def get_catalogs_tree(self) -> str or None:
+        return self.client.get_catalog_list()
+
+    def get_user_timetables_tree(self) -> str or None:
+        return self.client.get_time_table_list(use_credentials=True)
+
+    def get_user_catalogs_tree(self) -> str or None:
+        return self.client.get_catalog_list(use_credentials=True)
+
+    def get_derived_parameter_tree(self) -> str or None:
+        return self.client.get_derived_parameter_list()
+
+    def get_data(self, product, start_time=None, stop_time=None,
+                 **kwargs) -> Optional[Union[SpeasyVariable, TimeTable, Catalog, Dataset]]:
+        product_t = self.product_type(product)
+        if product_t == ImpexProductType.DATASET and start_time and stop_time:
+            return self.get_dataset(dataset_id=product, start=start_time, stop=stop_time, **kwargs)
+        if product_t == ImpexProductType.PARAMETER and start_time and stop_time:
+            if self.is_user_parameter(product):
+                return self.get_user_parameter(parameter_id=product,
+                                               start_time=start_time, stop_time=stop_time, **kwargs)
+            else:
+                return self.get_parameter(product=product, start_time=start_time, stop_time=stop_time, **kwargs)
+        if product_t == ImpexProductType.CATALOG:
+            if self.is_user_catalog(product):
+                return self.get_user_catalog(catalog_id=product, **kwargs)
+            else:
+                return self.get_catalog(catalog_id=product, **kwargs)
+        if product_t == ImpexProductType.TIMETABLE:
+            if self.is_user_timetable(product):
+                return self.get_user_timetable(timetable_id=product, **kwargs)
+            else:
+                return self.get_timetable(timetable_id=product, **kwargs)
+        raise ValueError(f"Unknown product: {product}")
+
+    def get_user_parameter(self, parameter_id: str or ParameterIndex, start_time: datetime or str,
+                           stop_time: datetime or str, **kwargs) -> Optional[SpeasyVariable]:
+        parameter_id = to_xmlid(parameter_id)
+        start_time, stop_time = make_utc_datetime(start_time), make_utc_datetime(stop_time)
+        return self.dl_user_parameter(parameter_id=parameter_id, start_time=start_time, stop_time=stop_time, **kwargs)
+
+    def get_parameter(self, product, start_time, stop_time,
+                      extra_http_headers: Dict or None = None,
+                      output_format: str or None = None, **kwargs) -> Optional[SpeasyVariable]:
+        if hasattr(self, 'has_time_restriction') and self.has_time_restriction(product, start_time, stop_time):
+            kwargs['disable_proxy'] = True
+            kwargs['restricted_period'] = True
+            return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
+                                       output_format=output_format or self.client.output_format, **kwargs)
+        else:
+            return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
+                                       output_format=output_format or self.client.output_format, **kwargs)
+
+    def get_dataset(self, dataset_id: str or DatasetIndex, start: str or datetime, stop: str or datetime,
+                    **kwargs) -> Dataset or None:
+        ds_range = self.dataset_range(dataset_id)
+        if not ds_range.intersect(DateTimeRange(start, stop)):
+            log.warning(f"You are requesting {dataset_id} outside of its definition range {ds_range}")
+            return None
+
+        dataset_id = to_xmlid(dataset_id)
+        name = self.flat_inventory.datasets[dataset_id].name
+        meta = {k: v for k, v in self.flat_inventory.datasets[dataset_id].__dict__.items() if
+                not isinstance(v, SpeasyIndex)}
+        parameters = self.list_parameters(dataset_id)
+        return Dataset(name=name,
+                       variables={p.name: self.get_parameter(p, start, stop, **kwargs) for p in parameters},
+                       meta=meta)
+
+    def get_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
+        return self.dl_timetable(to_xmlid(timetable_id), **kwargs)
+
+    def get_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
+        return self.dl_catalog(to_xmlid(catalog_id), **kwargs)
+
+    def get_user_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
+        timetable_id = to_xmlid(timetable_id)
+        return self.dl_user_timetable(to_xmlid(timetable_id))
+
+    def get_user_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
+        catalog_id = to_xmlid(catalog_id)
+        return self.dl_user_catalog(to_xmlid(catalog_id), **kwargs)
+
+    def get_product_variables(self, product_id: str or SpeasyIndex):
+        product_id = to_xmlid(product_id)
+        return [product_id]
+
+    def _get_parameter(self, product, start_time, stop_time,
+                       extra_http_headers: Dict or None = None, output_format: str or None = None,
+                       restricted_period=False, **kwargs) -> \
+        Optional[
+            SpeasyVariable]:
+        log.debug(f'Get data: product = {product}, data start time = {start_time}, data stop time = {stop_time}')
+        return self.dl_parameter(start_time=start_time, stop_time=stop_time, parameter_id=product,
+                                 extra_http_headers=extra_http_headers,
+                                 output_format=output_format,
+                                 product_variables=self.get_product_variables(product),
+                                 restricted_period=restricted_period,
+                                 time_format='UNIXTIME')
 
     def dl_parameter_chunk(self, start_time: datetime, stop_time: datetime, parameter_id: str,
                            extra_http_headers: Dict or None = None,
@@ -186,11 +291,7 @@ class ImpexProvider:
                                  use_credentials=True, **kwargs)
 
     def dl_timetable(self, timetable_id: str, use_credentials=False, **kwargs):
-        if 'get_timetable' in self.cache_handlers:
-            get_timetable_url = self.cache_handlers['get_timetable'](timetable_id,
-                                                                     use_credentials=use_credentials, **kwargs)
-        else:
-            get_timetable_url = self.client.get_timetable(timetable_id, use_credentials=use_credentials, **kwargs)
+        get_timetable_url = self.client.get_timetable(timetable_id, use_credentials=use_credentials, **kwargs)
         if get_timetable_url is not None:
             timetable = load_timetable(filename=get_timetable_url)
             if timetable:
@@ -207,11 +308,7 @@ class ImpexProvider:
         return self.dl_timetable(timetable_id, use_credentials=True, **kwargs)
 
     def dl_catalog(self, catalog_id: str, use_credentials=False, **kwargs):
-        if 'get_catalog' in self.cache_handlers:
-            get_catalog_url = self.cache_handlers['get_catalog'](catalog_id,
-                                                                 use_credentials=use_credentials, **kwargs)
-        else:
-            get_catalog_url = self.client.get_catalog(catalog_id, use_credentials=use_credentials, **kwargs)
+        get_catalog_url = self.client.get_catalog(catalog_id, use_credentials=use_credentials, **kwargs)
         if get_catalog_url is not None:
             catalog = load_catalog(get_catalog_url)
             if catalog:
@@ -272,7 +369,8 @@ class ImpexProvider:
                 if product_id in dataset:
                     return to_xmlid(dataset)
 
-    def is_user_prod(self, product_id: str or SpeasyIndex, collection: Dict):
+    @staticmethod
+    def is_user_product(product_id: str or SpeasyIndex, collection: Dict):
         xmlid = to_xmlid(product_id)
         if xmlid in collection:
             return is_private(collection[xmlid])
