@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 
 clweb_provider_name = 'clweb'
 clweb_capabilities = [ImpexEndpoint.OBSTREE, ImpexEndpoint.GETPARAM, ImpexEndpoint.LISTTT, ImpexEndpoint.GETTT]
+clweb_name_mapping = {
+}
 
 
 def _clweb_cache_entry_name(prefix: str, product: str, start_time: str, **kwargs):
@@ -41,7 +43,7 @@ class CLWeb_Webservice(ImpexProvider):
     def __init__(self):
         ImpexProvider.__init__(self, provider_name=clweb_provider_name, server_url=clweb_cfg.entry_point(),
                                max_chunk_size_days=clweb_cfg.max_chunk_size_days(),
-                               capabilities=clweb_capabilities,
+                               capabilities=clweb_capabilities, name_mapping=clweb_name_mapping,
                                username=clweb_cfg.username(), password=clweb_cfg.password())
 
     @staticmethod

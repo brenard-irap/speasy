@@ -4,6 +4,9 @@ from enum import Enum
 from typing import Dict, Optional, List, Union
 from types import SimpleNamespace
 import warnings
+from copy import deepcopy
+
+import numpy as np
 
 from ..datetime_range import DateTimeRange
 from ...core.dataprovider import (DataProvider)
@@ -12,8 +15,8 @@ from ...core import make_utc_datetime
 
 from ...core.inventory.indexes import ComponentIndex, DatasetIndex, ParameterIndex, SpeasyIndex, \
                                       TimetableIndex, CatalogIndex
-from ...core.cdf import load_variable as cdf_load_variable
-from ...products.variable import SpeasyVariable, merge
+from ...core.cdf import load_variables as cdf_load_variables
+from ...products.variable import SpeasyVariable, merge, DataContainer
 from ...products.catalog import Catalog
 from ...products.dataset import Dataset
 from ...products.timetable import TimeTable
@@ -236,6 +239,8 @@ class ImpexProvider(DataProvider):
                            extra_http_headers: Dict or None = None,
                            use_credentials: bool = False,
                            product_variables: List = None, **kwargs) -> Optional[SpeasyVariable]:
+        if not product_variables:
+            return None
         url = self.client.get_parameter(start_time=start_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                                         stop_time=stop_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                                         parameter_id=parameter_id, extra_http_headers=extra_http_headers,
@@ -244,16 +249,25 @@ class ImpexProvider(DataProvider):
         if url is not None:
             var = None
             if kwargs.get('output_format', self.client.output_format) in ["CDF_ISTP", "CDF"]:
-                var = cdf_load_variable(variable=product_variables[0], file=url)
+                var = cdf_load_variables(variables=product_variables, file=url)
             elif hasattr(self, 'load_specific_output_format'):
-                var = self.load_specific_output_format(url, parameter_id)
+                var = self.load_specific_output_format(url, product_variables)
             if var is not None:
-                if len(var):
-                    log.debug(
-                        f'Loaded var: data shape = {var.values.shape}, data start time = {var.time[0]}, \
-                                data stop time = {var.time[-1]}')
+                if isinstance(var, SpeasyVariable):
+                    if len(var):
+                        log.debug(
+                            f'Loaded var: data shape = {var.values.shape}, data start time = {var.time[0]}, \
+                                    data stop time = {var.time[-1]}')
+                    else:
+                        log.debug('Loaded var: Empty var')
                 else:
-                    log.debug('Loaded var: Empty var')
+                    if parameter_id in self.flat_inventory.parameters:
+                        name = self.flat_inventory.parameters[parameter_id].spz_name()
+                    else:
+                        name = parameter_id
+                    var = ImpexProvider._concatenate_variables(var, name)
+                    if var is None:
+                        log.debug(f'Failed to concatenate variables')
             else:
                 log.debug(f'Failed to load file f{url}')
             return var
@@ -398,3 +412,34 @@ class ImpexProvider(DataProvider):
 
     def list_user_catalogs(self) -> List[CatalogIndex]:
         return list(filter(is_private, flat_inventories.__dict__[self.provider_name].catalogs.values()))
+
+    @staticmethod
+    def _concatenate_variables(variables: Dict[str, SpeasyVariable], product_id) -> Optional[SpeasyVariable]:
+        if len(variables) == 0:
+            return None
+        elif len(variables) == 1:
+            result = list(variables.values())[0].copy()
+            result.values.name = product_id
+            return result
+
+        axes = []
+        columns = []
+        values = None
+        meta = {}
+        for name, variable in variables.items():
+            if not axes:
+                values = variable.values.copy()
+                axes = variable.axes.copy()
+                meta = deepcopy(variable.meta)
+            else:
+                values = np.concatenate((values, variable.values), axis=1)
+                axes += [axis.copy() for axis in variable.axes[1:]]
+            columns.append(name)
+
+        if 'FIELDNAM' in meta:
+            meta['FIELDNAM'] = name
+
+        return SpeasyVariable(
+            axes=axes,
+            values=DataContainer(values=values, meta=meta, name=product_id, is_time_dependent=True),
+            columns=columns)

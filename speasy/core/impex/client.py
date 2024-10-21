@@ -7,7 +7,7 @@ import time
 from ...core import http
 from ...core.http import is_server_up
 
-from .exceptions import MissingCredentials
+from .exceptions import MissingCredentials, UnavailableEndpoint
 
 log = logging.getLogger(__name__)
 
@@ -145,6 +145,8 @@ class ImpexClient:
 
     def _send_request(self, endpoint: ImpexEndpoint, params: Dict = None, timeout: int = http.DEFAULT_TIMEOUT,
                       extra_http_headers: Dict or None = None) -> str or bool or None:
+        if not self.is_capable(endpoint):
+            raise UnavailableEndpoint()
         url = self._request_url(endpoint)
         params = params or {}
         http_headers = extra_http_headers or {}
