@@ -4,6 +4,7 @@ from typing import List, Optional
 
 import pyistp
 from pyistp.loader import DataVariable, ISTPLoader
+from speasy.core import fix_name
 from speasy.core.any_files import any_loc_open
 from speasy.core.cache import CacheCall
 from speasy.core.inventory.indexes import ParameterIndex, DatasetIndex
@@ -77,7 +78,7 @@ def make_dataset_index(url: str, name: str, provider: str, uid: str, meta=None,
             cdf = pyistp.load(buffer=remote_cdf.read())
             dataset = DatasetIndex(name=name, provider=provider, uid=uid, meta={**filter_dataset_meta(cdf), **meta})
             dataset.__dict__.update(
-                {p.spz_name(): p for p in
+                {fix_name(p.spz_name()): p for p in
                  _extract_parameters_impl(cdf, provider=provider, uid_fmt=params_uid_format, meta=params_meta)})
             return dataset
     except RuntimeError:

@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 clweb_provider_name = 'clweb'
 clweb_capabilities = [ImpexEndpoint.OBSTREE, ImpexEndpoint.GETPARAM, ImpexEndpoint.LISTTT, ImpexEndpoint.GETTT]
 clweb_name_mapping = {
+    #'parameter': 'var'
 }
 
 
@@ -54,11 +55,11 @@ class CLWeb_Webservice(ImpexProvider):
             return False
 
     @CacheCall(cache_retention=clweb_cfg.user_cache_retention(), is_pure=True)
-    def get_timetable(self, timetable_id: str, **kwargs) -> str or None:
+    def get_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
         return super().get_timetable(timetable_id, **kwargs)
 
     @CacheCall(cache_retention=clweb_cfg.user_cache_retention())
-    def get_user_timetable(self, timetable_id: str or TimetableIndex) -> Optional[TimeTable]:
+    def get_user_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
         return super().get_user_timetable(timetable_id)
 
     @CacheCall(cache_retention=24 * 60 * 60, is_pure=True)

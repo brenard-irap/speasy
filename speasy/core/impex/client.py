@@ -66,6 +66,10 @@ class ImpexClient:
     def auth(self):
         return self._send_request(ImpexEndpoint.AUTH)
 
+    @staticmethod
+    def in_progress(result):
+        return result == "in progress"
+
     def get_obs_data_tree(self, use_credentials=False):
         params = {}
         if use_credentials:
@@ -89,8 +93,11 @@ class ImpexClient:
         params['userID'], params['password'] = self.get_credentials()
         return self._send_indirect_request(ImpexEndpoint.LISTPARAM, params=params)
 
-    def get_status(self):
-        pass
+    def get_status(self, process_id, extra_http_headers=None):
+        params = {
+            'id': process_id,
+        }
+        return self._send_request(ImpexEndpoint.GETSTATUS, params=params, extra_http_headers=extra_http_headers)
 
     def get_parameter(self, start_time, stop_time, parameter_id, extra_http_headers=None,
                       use_credentials=False, **kwargs):
@@ -109,7 +116,7 @@ class ImpexClient:
         if self.use_token:
             params['token'] = self.auth()
         return self._send_request(ImpexEndpoint.GETPARAM, params=params,
-                                  extra_http_headers=extra_http_headers)
+                                  extra_http_headers=extra_http_headers, timeout=5*60)
 
     def get_timetable(self, tt_id, use_credentials=False):
         params = {
@@ -159,17 +166,19 @@ class ImpexClient:
             if 'success' in js and (js['success'] is True) and ('dataFileURLs' in js):
                 log.debug(f"success: {js['dataFileURLs']}")
                 return js['dataFileURLs']
-            elif "success" in js and (js["success"] is True) and ("status" in js) and \
-                 (js["status"] == "in progress") and self.is_capable(ImpexEndpoint.GETSTATUS):
-                log.warning("This request duration is too long, consider reducing time range")
-                while True:
+            elif "success" in js and (js["success"] is True) and ("status" in js):
+                if ImpexClient.in_progress(js['status']):
+                    if "id" in js:
+                        log.warning("This request duration is too long, consider reducing time range")
+                        process_id = js["id"]
+                    elif "id" in params:
+                        process_id = params["id"]
+                    else:
+                        log.debug("Cannot retrieve process id")
+                        return None
                     default_sleep_time = 10.
                     time.sleep(default_sleep_time)
-                    url = self._request_url(ImpexEndpoint.GETSTATUS)
-
-                    status = http.get(url, params=js, headers=http_headers).json()
-                    if status is not None and status["status"] == "done":
-                        return status["dataFileURLs"]
+                    return self.get_status(process_id)
             elif "alive" in js and (js["alive"] is True):
                 return True
             else:

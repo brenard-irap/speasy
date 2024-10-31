@@ -2,6 +2,7 @@ import logging
 import os.path
 from typing import List
 
+from speasy.core import fix_name
 from speasy.core.cdf.inventory_extractor import extract_parameters
 from speasy.core.inventory.indexes import ParameterIndex, DatasetIndex, SpeasyIndex
 
@@ -17,7 +18,7 @@ def _patch_parameter(parameter: ParameterIndex, dataset: DatasetIndex):
 
 def load_master_cdf(path, dataset: DatasetIndex):
     dataset.__dict__.update(
-        {p.spz_name(): p for p in
+        {fix_name(p.spz_name()): p for p in
          map(lambda p: _patch_parameter(p, dataset), extract_parameters(path, provider="cda",
                                                                         uid_fmt=f"{dataset.serviceprovider_ID}/{{var_name}}"))})
 

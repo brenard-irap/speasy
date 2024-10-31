@@ -6,6 +6,7 @@
 """
 
 import os
+import re
 import warnings
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -326,7 +327,24 @@ def fix_name(name: str):
         ('(', ''),
         ('⊙', 'o'),
         (';', '_'),
-        (',', '_')
+        (',', '_'),
+        #('+', 'plus'),
+        #('@', '_'),
+        #('>', 'gt'),
+        #('<', 'lt'),
+        #('[', '_'),
+        #(']', '_'),
+        #('|', '_'),
+        #('⎜', '_'),
+        #('*', '_'),
+        #('%', '_'),
+        #('\'', '_'),
+        #('!', '_'),
+        #('^', '_'),
+        #('=', '_'),
+        #('&', '_'),
+        #('#', '_'),
+        #('@', '_')
     )
     if len(name):
         if name[0].isnumeric():
@@ -334,6 +352,8 @@ def fix_name(name: str):
         for bad, replacement in rules:
             if bad in name:
                 name = name.replace(bad, replacement)
+        #name = re.sub('[^0-9a-zA-Z]+', '_', name)
+        name = name.strip()
         return name
     raise ValueError("Got empty name")
 

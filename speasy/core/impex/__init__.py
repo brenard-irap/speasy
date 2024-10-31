@@ -107,8 +107,7 @@ class ImpexProvider(DataProvider):
                                                        meta=user_cat.catalogList.__dict__)
 
             if self.client.is_capable(ImpexEndpoint.LISTPARAM):
-                get_derived_parameter_list_xml = self.client.get_derived_parameter_list()
-                user_param = ImpexXMLParser.parse(get_derived_parameter_list_xml,
+                user_param = ImpexXMLParser.parse(self.get_derived_parameter_tree(),
                                                   self.provider_name, self.name_mapping, is_public=False)
                 root.DerivedParameters = SpeasyIndex(name='DerivedParameters', provider=self.provider_name,
                                                      uid='DerivedParameters', meta=user_param.ws.paramList.__dict__)
@@ -182,11 +181,8 @@ class ImpexProvider(DataProvider):
         if hasattr(self, 'has_time_restriction') and self.has_time_restriction(product, start_time, stop_time):
             kwargs['disable_proxy'] = True
             kwargs['restricted_period'] = True
-            return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
-                                       output_format=output_format or self.client.output_format, **kwargs)
-        else:
-            return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
-                                       output_format=output_format or self.client.output_format, **kwargs)
+        return self._get_parameter(product, start_time, stop_time, extra_http_headers=extra_http_headers,
+                                   output_format=output_format or self.client.output_format, **kwargs)
 
     def get_dataset(self, dataset_id: str or DatasetIndex, start: str or datetime, stop: str or datetime,
                     **kwargs) -> Dataset or None:
@@ -216,10 +212,12 @@ class ImpexProvider(DataProvider):
 
     def get_user_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
         catalog_id = to_xmlid(catalog_id)
-        return self.dl_user_catalog(to_xmlid(catalog_id), **kwargs)
+        return self.dl_user_catalog(catalog_id, **kwargs)
 
     def get_product_variables(self, product_id: str or SpeasyIndex):
         product_id = to_xmlid(product_id)
+        if self.is_user_parameter(product_id):
+            return ['ws_'+flat_inventories.__dict__[self.provider_name].parameters[product_id].name]
         return [product_id]
 
     def _get_parameter(self, product, start_time, stop_time,
@@ -239,8 +237,6 @@ class ImpexProvider(DataProvider):
                            extra_http_headers: Dict or None = None,
                            use_credentials: bool = False,
                            product_variables: List = None, **kwargs) -> Optional[SpeasyVariable]:
-        if not product_variables:
-            return None
         url = self.client.get_parameter(start_time=start_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                                         stop_time=stop_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                                         parameter_id=parameter_id, extra_http_headers=extra_http_headers,
@@ -248,6 +244,8 @@ class ImpexProvider(DataProvider):
         # check status until done
         if url is not None:
             var = None
+            if not product_variables:
+                product_variables = [parameter_id]
             if kwargs.get('output_format', self.client.output_format) in ["CDF_ISTP", "CDF"]:
                 var = cdf_load_variables(variables=product_variables, file=url)
             elif hasattr(self, 'load_specific_output_format'):
@@ -277,7 +275,7 @@ class ImpexProvider(DataProvider):
                      extra_http_headers: Dict or None = None, restricted_period=False,
                      use_credentials: bool = False,
                      product_variables: List = None, **kwargs) -> Optional[SpeasyVariable]:
-        dt = timedelta(days=self.max_chunk_size_days)
+        dt = timedelta(days=20)#self.max_chunk_size_days)
         if restricted_period:
             if not self.client.credential_are_valid():
                 raise MissingCredentials(
@@ -296,12 +294,13 @@ class ImpexProvider(DataProvider):
             return var
         else:
             return self.dl_parameter_chunk(start_time, stop_time, parameter_id, extra_http_headers=extra_http_headers,
-                                           use_credentials=restricted_period or use_credentials,
+                                           use_credentials=use_credentials,
                                            product_variables=product_variables, **kwargs)
 
     def dl_user_parameter(self, start_time: datetime, stop_time: datetime, parameter_id: str,
                           **kwargs) -> Optional[SpeasyVariable]:
         return self.dl_parameter(parameter_id=parameter_id, start_time=start_time, stop_time=stop_time,
+                                 product_variables=self.get_product_variables(parameter_id),
                                  use_credentials=True, **kwargs)
 
     def dl_timetable(self, timetable_id: str, use_credentials=False, **kwargs):

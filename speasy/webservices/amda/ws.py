@@ -25,7 +25,8 @@ log = logging.getLogger(__name__)
 
 amda_provider_name = 'amda'
 amda_capabilities = [ImpexEndpoint.AUTH, ImpexEndpoint.OBSTREE, ImpexEndpoint.GETPARAM, ImpexEndpoint.LISTTT,
-                     ImpexEndpoint.GETTT, ImpexEndpoint.LISTCAT, ImpexEndpoint.GETCAT, ImpexEndpoint.LISTPARAM]
+                     ImpexEndpoint.GETTT, ImpexEndpoint.LISTCAT, ImpexEndpoint.GETCAT, ImpexEndpoint.LISTPARAM,
+                     ImpexEndpoint.GETSTATUS]
 amda_name_mapping = {
     "dataset": "xmlid",
     "parameter": "xmlid",
@@ -84,19 +85,19 @@ class AMDA_Webservice(ImpexProvider):
         return load_csv(filename, expected_parameter)
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-    def get_timetable(self, timetable_id: str, **kwargs) -> str or None:
+    def get_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
         return super().get_timetable(timetable_id, **kwargs)
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-    def get_catalog(self, catalog_id: str, **kwargs) -> str or None:
+    def get_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
         return super().get_catalog(catalog_id, **kwargs)
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention())
-    def get_user_timetable(self, timetable_id: str or TimetableIndex) -> Optional[TimeTable]:
+    def get_user_timetable(self, timetable_id: str or TimetableIndex, **kwargs) -> Optional[TimeTable]:
         return super().get_user_timetable(timetable_id)
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention())
-    def get_user_catalog(self, catalog_id: str or CatalogIndex) -> Optional[Catalog]:
+    def get_user_catalog(self, catalog_id: str or CatalogIndex, **kwargs) -> Optional[Catalog]:
         return super().get_user_catalog(catalog_id)
 
     @CacheCall(cache_retention=24 * 60 * 60, is_pure=True)
@@ -120,7 +121,7 @@ class AMDA_Webservice(ImpexProvider):
         return super().get_user_catalogs_tree()
 
     @CacheCall(cache_retention=amda_cfg.user_cache_retention(), is_pure=True)
-    def get_derived_parameter_tree(self):
+    def get_derived_parameter_tree(self) -> str or None:
         return super().get_derived_parameter_tree()
 
     @AllowedKwargs(

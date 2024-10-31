@@ -1,6 +1,8 @@
 import json
 from typing import Optional
 
+from .. import fix_name
+
 __INDEXES_TYPES__ = {}
 
 
@@ -136,9 +138,10 @@ def from_json(inventory_tree: str):
 
 
 def make_inventory_node(parent, ctor, name, provider, uid, **meta):
-    if name not in parent.__dict__:
-        parent.__dict__[name] = ctor(name=name, provider=provider, uid=uid, meta=meta)
-    return parent.__dict__[name]
+    fixed_name = fix_name(name)
+    if fixed_name not in parent.__dict__:
+        parent.__dict__[fixed_name] = ctor(name=name, provider=provider, uid=uid, meta=meta)
+    return parent.__dict__[fixed_name]
 
 
 def inventory_has_changed(orig, new):
