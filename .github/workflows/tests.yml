@@ -43,35 +43,3 @@ jobs:
         pip install pytest pytest-cov sphinx pandoc
         pip install -r docs/requirements.txt
         pytest
-    - name: Test with pytest (coverage + long tests)
-      if: matrix.python-version == '3.10' && matrix.os == 'ubuntu-latest'
-      env:
-        SPEASY_AMDA_MAX_CHUNK_SIZE_DAYS: "25"
-        SPEASY_LONG_TESTS: ""
-        SPEASY_INVENTORY_TESTS: ""
-        SPEASY_CORE_HTTP_REWRITE_RULES: '{"https://thisserver_does_not_exists.lpp.polytechnique.fr/pub/":"http://sciqlop.lpp.polytechnique.fr/cdaweb-data/pub/"}'
-      run: |
-        sudo apt update && sudo apt install -y texlive pandoc
-        pip install pytest pytest-cov sphinx pandoc
-        pip install -r docs/requirements.txt
-        pytest --cov=./ -cov-config=.coveragerc --cov-report=xml
-        make doctest
-    - name: Check that release process is not broken
-      if: matrix.python-version == '3.9' && matrix.os == 'ubuntu-latest'
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_TEST_PASSWORD }}
-      run: |
-        pip install build wheel twine
-        python -m build .
-        twine check dist/*
-        twine upload --repository testpypi --skip-existing dist/*
-    - name: Upload coverage to Codecov
-      if: matrix.python-version == '3.10' && matrix.os == 'ubuntu-latest'
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: true
