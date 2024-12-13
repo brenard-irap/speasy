@@ -2,6 +2,7 @@ import json
 import logging
 import platform
 import re
+import os
 from functools import partial
 from typing import Optional
 
@@ -143,6 +144,9 @@ def is_server_up(url: Optional[str] = None, host: Optional[str] = None, port: Op
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         result = sock.connect_ex((host, int(port)))
+        sock.close()
+        if result > 0:
+            log.error(f"Error while checking server status: {result} - {os.strerror(result)}")
         return result == 0
     except Exception as e:
         log.error(f"Error while checking server status: {e}")
