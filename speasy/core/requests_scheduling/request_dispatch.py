@@ -14,7 +14,7 @@ from ..inventory.indexes import (CatalogIndex, ComponentIndex,
 from ...config import core as core_cfg, amda as amda_cfg
 from ...products import *
 from ...webservices import (AMDA_Webservice, CDA_Webservice, CSA_Webservice,
-                            SSC_Webservice, GenericArchive)
+                            SSC_Webservice, GenericArchive, ExtraParameters)
 from ..http import is_server_up
 
 log = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ csa = None
 cda = None
 ssc = None
 archive = None
+extra = None
 
 
 def init_amda():
@@ -87,12 +88,22 @@ def init_archive():
         PROVIDERS['generic_archive'] = archive
 
 
+def init_extra():
+    global extra
+    if not core_cfg.disabled_providers().intersection({'extra', 'extra_parameters'}):
+        extra = ExtraParameters()
+        sys.modules[__name__].extra = extra
+        PROVIDERS['extra'] = extra
+        PROVIDERS['extra_parameters'] = extra
+
+
 def init_providers():
     init_amda()
     init_csa()
     init_cdaweb()
     init_sscweb()
     init_archive()
+    init_extra()
 
 
 if 'SPEASY_SKIP_INIT_PROVIDERS' not in os.environ:
