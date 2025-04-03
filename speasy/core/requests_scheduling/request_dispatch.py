@@ -11,10 +11,10 @@ from ..datetime_range import DateTimeRange
 from ..inventory.indexes import (CatalogIndex, ComponentIndex,
                                  DatasetIndex, ParameterIndex,
                                  SpeasyIndex, TimetableIndex)
-from ...config import core as core_cfg, amda as amda_cfg
+from ...config import core as core_cfg, amda as amda_cfg, clweb as clweb_cfg
 from ...products import *
 from ...data_providers import (AmdaWebservice, CdaWebservice, CsaWebservice,
-                               SscWebservice, GenericArchive)
+                               SscWebservice, ClWebservice, GenericArchive)
 from ..http import is_server_up
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ amda = None
 csa = None
 cda = None
 ssc = None
+clweb = None
 archive = None
 
 
@@ -78,6 +79,17 @@ def init_sscweb(ignore_disabled_status=False):
             log.warning(f"SSC server {SscWebservice.BASE_URL} is down, disabling SSC provider")
 
 
+def init_clweb(ignore_disabled_status=False):
+    global clweb
+    if ignore_disabled_status or 'clweb' not in core_cfg.disabled_providers():
+        if ClWebservice.is_server_up():
+            clweb = ClWebservice()
+            sys.modules[__name__].clweb = clweb
+            PROVIDERS['clweb'] = clweb
+        else:
+            log.warning(f"CLWeb server {clweb_cfg.entry_point()} is down, disabling CLWeb provider")
+
+
 def init_archive(ignore_disabled_status=False):
     global archive
     if ignore_disabled_status or not core_cfg.disabled_providers().intersection({'archive', 'generic_archive'}):
@@ -92,6 +104,7 @@ def init_providers(ignore_disabled_status=False):
     init_csa(ignore_disabled_status=ignore_disabled_status)
     init_cdaweb(ignore_disabled_status=ignore_disabled_status)
     init_sscweb(ignore_disabled_status=ignore_disabled_status)
+    init_clweb(ignore_disabled_status=ignore_disabled_status)
     init_archive(ignore_disabled_status=ignore_disabled_status)
 
 
