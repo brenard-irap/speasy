@@ -11,7 +11,6 @@ jobs:
     env:
       SPEASY_AMDA_USERNAME: ${{ secrets.SPEASY_AMDA_USERNAME }}
       SPEASY_AMDA_PASSWORD: ${{ secrets.SPEASY_AMDA_PASSWORD }}
-      SPEASY_CORE_DISABLED_PROVIDERS: "cdpp3dview"
 
     runs-on: ${{ matrix.os }}
     strategy:
