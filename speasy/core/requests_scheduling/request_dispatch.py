@@ -49,8 +49,10 @@ def _is_server_up(ws_class):
         True if the server is up, False otherwise.
     """
     if hasattr(ws_class, 'is_server_up'):
+        log.error("BRE - is_server_up - A")
         return ws_class.is_server_up()
     elif hasattr(ws_class, 'BASE_URL'):
+        log.error("BRE - is_server_up - B")
         return is_server_up(ws_class.BASE_URL)
     return True
 
@@ -77,13 +79,17 @@ def _safe_init_provider(ws_class, names, ignore_disabled_status=False):
         If the server is not running.
     """
     try:
+        log.error("_safe_init_provider")
         if ignore_disabled_status or not core_cfg.disabled_providers().intersection(set(names)):
             main_name = names[0]
+            log.error(main_name)
             if _is_server_up(ws_class):
+                log.error("OK")
                 globals()[main_name] = ws_class()
                 for name in names:
                     PROVIDERS[name] = globals()[main_name]
             else:
+                log.error("KO")
                 raise RuntimeError(f'{main_name} is not running')
     except Exception:  # pylint: disable=broad-except
         log.warning(f"Provider {names} initialization failed, disabling provider")
@@ -119,6 +125,7 @@ def init_uiowaephtool(ignore_disabled_status=False):
 
 
 def init_cdpp3dview(ignore_disabled_status=False):
+    log.error("init_cdpp3dview")
     _safe_init_provider(Cdpp3dViewWebservice, ['cdpp3dview', '3DView'],
                         ignore_disabled_status=ignore_disabled_status)
 
